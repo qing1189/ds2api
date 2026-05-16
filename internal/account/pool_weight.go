@@ -24,13 +24,17 @@ const (
 )
 
 type accountWeightState struct {
-	maxWeight          int
-	currentWeight      int
-	consecutiveFails   int
+	maxWeight            int
+	currentWeight        int
+	consecutiveFails     int
 	consecutiveSuccesses int
-	lastFailureAt      time.Time
-	lastSuccessAt      time.Time
-	disabled           bool // true when weight hits 0, requires admin re-enable
+	lastFailureAt        time.Time
+	lastSuccessAt        time.Time
+	disabled             bool // true when weight hits 0, requires admin re-enable
+
+	totalRequests  int
+	successCount   int
+	failureCount   int
 }
 
 // weights manages runtime account weight state.
@@ -103,6 +107,8 @@ func (w *weights) ReportSuccess(accountID string) {
 	state.lastSuccessAt = time.Now()
 	state.consecutiveSuccesses++
 	state.consecutiveFails = 0
+	state.totalRequests++
+	state.successCount++
 
 	// Restore weight after enough consecutive successes.
 	if state.consecutiveSuccesses >= ConsecutiveSuccessesToRecover && state.currentWeight < state.maxWeight {
@@ -131,6 +137,8 @@ func (w *weights) ReportFailure(accountID string) {
 	state.lastFailureAt = time.Now()
 	state.consecutiveFails++
 	state.consecutiveSuccesses = 0
+	state.totalRequests++
+	state.failureCount++
 
 	degradation := int(float64(state.maxWeight) * WeightDegradeFactor)
 	state.currentWeight -= degradation
@@ -297,6 +305,9 @@ func (w *weights) GetWeightStatus() []map[string]any {
 			"consecutive_successes": state.consecutiveSuccesses,
 			"last_failure_at":      formatTimeOrNil(state.lastFailureAt),
 			"last_success_at":      formatTimeOrNil(state.lastSuccessAt),
+			"total_requests":       state.totalRequests,
+			"success_count":        state.successCount,
+			"failure_count":        state.failureCount,
 		})
 	}
 	return result
