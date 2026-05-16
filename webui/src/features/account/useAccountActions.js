@@ -17,6 +17,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
     const [sessionCounts, setSessionCounts] = useState({})
     const [deletingSessions, setDeletingSessions] = useState({})
     const [updatingProxy, setUpdatingProxy] = useState({})
+    const [reenableLoading, setReenableLoading] = useState({})
 
     const openAddKey = () => {
         setEditingKey(null)
@@ -345,6 +346,26 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
         }
     }
 
+    const reenableAccount = async (identifier) => {
+        const accountID = String(identifier || '').trim()
+        if (!accountID) return
+        setReenableLoading(prev => ({ ...prev, [accountID]: true }))
+        try {
+            const res = await apiFetch(`/admin/queue/reenable/${encodeURIComponent(accountID)}`, { method: 'POST' })
+            const data = await res.json()
+            if (res.ok) {
+                onMessage('success', t('accountManager.reenableSuccess'))
+                onRefresh()
+            } else {
+                onMessage('error', data.detail || t('messages.requestFailed'))
+            }
+        } catch (e) {
+            onMessage('error', t('messages.networkError'))
+        } finally {
+            setReenableLoading(prev => ({ ...prev, [accountID]: false }))
+        }
+    }
+
     return {
         showAddKey,
         openAddKey,
@@ -382,5 +403,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
         testAllAccounts,
         deleteAllSessions,
         updateAccountProxy,
+        reenableAccount,
+        reenableLoading,
     }
 }

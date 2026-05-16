@@ -175,7 +175,20 @@
         "envModeRiskDesc": "Detected DS2API_CONFIG_JSON. If DS2API_ENV_WRITEBACK is not enabled, Admin UI edits are in-memory only and may be lost after restart.",
         "envModeWritebackPendingTitle": "Env mode + auto-persistence enabled (pending file handoff)",
         "envModeWritebackActiveTitle": "Env mode + auto-persistence active",
-        "envModeWritebackDesc": "The app will auto-create/write the config file and transition to file-backed mode. Current persistence path: {path}"
+        "envModeWritebackDesc": "The app will auto-create/write the config file and transition to file-backed mode. Current persistence path: {path}",
+        "weightTitle": "Account Weights",
+        "healthy": "Healthy",
+        "degraded": "Degraded",
+        "disabled": "Disabled",
+        "healthyCount": "{count} accounts running healthy",
+        "degradedAccounts": "Degraded Accounts",
+        "disabledAccounts": "Disabled Accounts",
+        "failCount": "{count} consecutive failures",
+        "lastFail": "Last failure",
+        "degradeDetail": "{fail} fail / {succ} success",
+        "noWeightData": "No weight data available",
+        "reenable": "Re-enable",
+        "reenableSuccess": "Account re-enabled"
     },
     "proxyManager": {
         "title": "Proxy IPs",

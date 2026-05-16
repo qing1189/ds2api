@@ -2,6 +2,7 @@ import { useI18n } from '../../i18n'
 import { useAccountsData } from './useAccountsData'
 import { useAccountActions } from './useAccountActions'
 import QueueCards from './QueueCards'
+import WeightPanel from './WeightPanel'
 import ApiKeysPanel from './ApiKeysPanel'
 import AccountsTable from './AccountsTable'
 import AddKeyModal from './AddKeyModal'
@@ -14,6 +15,7 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
 
     const {
         queueStatus,
+        weights,
         keysExpanded,
         setKeysExpanded,
         accounts,
@@ -66,6 +68,8 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
         testAllAccounts,
         deleteAllSessions,
         updateAccountProxy,
+        reenableAccount,
+        reenableLoading,
     } = useAccountActions({
         apiFetch,
         t,
@@ -100,6 +104,13 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
             )}
 
             <QueueCards queueStatus={queueStatus} t={t} />
+
+            <WeightPanel
+                weights={weights}
+                t={t}
+                onReenable={reenableAccount}
+                reenableLoading={reenableLoading}
+            />
 
             <ApiKeysPanel
                 t={t}

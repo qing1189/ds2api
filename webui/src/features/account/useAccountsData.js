@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 export function useAccountsData({ apiFetch }) {
     const [queueStatus, setQueueStatus] = useState(null)
+    const [weights, setWeights] = useState(null)
     const [keysExpanded, setKeysExpanded] = useState(false)
 
     const [accounts, setAccounts] = useState([])
@@ -60,15 +61,32 @@ export function useAccountsData({ apiFetch }) {
         }
     }
 
+    const fetchWeights = async () => {
+        try {
+            const res = await apiFetch('/admin/queue/weights')
+            if (res.ok) {
+                const data = await res.json()
+                setWeights(data)
+            }
+        } catch (e) {
+            console.error('Failed to fetch weights:', e)
+        }
+    }
+
     useEffect(() => {
         fetchAccounts()
         fetchQueueStatus()
-        const interval = setInterval(fetchQueueStatus, 5000)
+        fetchWeights()
+        const interval = setInterval(() => {
+            fetchQueueStatus()
+            fetchWeights()
+        }, 5000)
         return () => clearInterval(interval)
     }, [])
 
     return {
         queueStatus,
+        weights,
         keysExpanded,
         setKeysExpanded,
         accounts,
