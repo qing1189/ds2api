@@ -32,9 +32,9 @@ type accountWeightState struct {
 	lastSuccessAt        time.Time
 	disabled             bool // true when weight hits 0, requires admin re-enable
 
-	totalRequests  int
-	successCount   int
-	failureCount   int
+	totalRequests int
+	successCount  int
+	failureCount  int
 }
 
 // weights manages runtime account weight state.
@@ -62,11 +62,11 @@ func (w *weights) initAccount(accountID string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.states[accountID] = &accountWeightState{
-		maxWeight:          DefaultWeight,
-		currentWeight:      DefaultWeight,
-		consecutiveFails:   0,
+		maxWeight:            DefaultWeight,
+		currentWeight:        DefaultWeight,
+		consecutiveFails:     0,
 		consecutiveSuccesses: 0,
-		disabled:           false,
+		disabled:             false,
 	}
 }
 
@@ -84,11 +84,11 @@ func (w *weights) resetAll(accountIDs []string) {
 	w.states = make(map[string]*accountWeightState, len(accountIDs))
 	for _, id := range accountIDs {
 		w.states[id] = &accountWeightState{
-			maxWeight:          DefaultWeight,
-			currentWeight:      DefaultWeight,
-			consecutiveFails:   0,
+			maxWeight:            DefaultWeight,
+			currentWeight:        DefaultWeight,
+			consecutiveFails:     0,
 			consecutiveSuccesses: 0,
-			disabled:           false,
+			disabled:             false,
 		}
 	}
 }
@@ -297,17 +297,17 @@ func (w *weights) GetWeightStatus() []map[string]any {
 	for _, id := range ids {
 		state := w.states[id]
 		result = append(result, map[string]any{
-			"account_id":           id,
-			"max_weight":           state.maxWeight,
-			"current_weight":       state.currentWeight,
-			"disabled":             state.disabled,
-			"consecutive_fails":    state.consecutiveFails,
+			"account_id":            id,
+			"max_weight":            state.maxWeight,
+			"current_weight":        state.currentWeight,
+			"disabled":              state.disabled,
+			"consecutive_fails":     state.consecutiveFails,
 			"consecutive_successes": state.consecutiveSuccesses,
-			"last_failure_at":      formatTimeOrNil(state.lastFailureAt),
-			"last_success_at":      formatTimeOrNil(state.lastSuccessAt),
-			"total_requests":       state.totalRequests,
-			"success_count":        state.successCount,
-			"failure_count":        state.failureCount,
+			"last_failure_at":       formatTimeOrNil(state.lastFailureAt),
+			"last_success_at":       formatTimeOrNil(state.lastSuccessAt),
+			"total_requests":        state.totalRequests,
+			"success_count":         state.successCount,
+			"failure_count":         state.failureCount,
 		})
 	}
 	return result
