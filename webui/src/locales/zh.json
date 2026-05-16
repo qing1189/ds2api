@@ -175,7 +175,20 @@
         "envModeRiskDesc": "检测到 DS2API_CONFIG_JSON。若未开启 DS2API_ENV_WRITEBACK，管理台改动仅在内存生效，重启可能丢失。",
         "envModeWritebackPendingTitle": "环境变量模式 + 自动持久化已开启（等待落盘）",
         "envModeWritebackActiveTitle": "环境变量模式 + 自动持久化已生效",
-        "envModeWritebackDesc": "程序会自动创建/写入配置文件并在后续切换为文件模式。当前持久化路径：{path}"
+        "envModeWritebackDesc": "程序会自动创建/写入配置文件并在后续切换为文件模式。当前持久化路径：{path}",
+        "weightTitle": "账号权重状态",
+        "healthy": "健康",
+        "degraded": "降权",
+        "disabled": "禁用",
+        "healthyCount": "{count} 个账号健康运行中",
+        "degradedAccounts": "降权账号",
+        "disabledAccounts": "禁用账号",
+        "failCount": "连续失败 {count} 次",
+        "lastFail": "最后失败",
+        "degradeDetail": "失败{fail}次/成功{succ}次",
+        "noWeightData": "暂无权重数据",
+        "reenable": "重新启用",
+        "reenableSuccess": "账号已重新启用"
     },
     "proxyManager": {
         "title": "代理 IP",
