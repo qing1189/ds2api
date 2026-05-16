@@ -95,6 +95,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIErrorWithCode(w, outErr.Status, outErr.Message, outErr.Code)
 			return
 		}
+		a.MarkOutcome(true)
 		respBody := openaifmt.BuildChatCompletionWithToolCalls(result.SessionID, stdReq.ResponseModel, result.Turn.Prompt, result.Turn.Thinking, result.Turn.Text, result.Turn.ToolCalls, stdReq.ToolsRaw)
 		respBody["usage"] = assistantturn.OpenAIChatUsage(result.Turn)
 		finishReason := assistantturn.FinalizeTurn(result.Turn, assistantturn.FinalizeOptions{}).FinishReason

@@ -17,6 +17,7 @@ type Pool struct {
 	recommendedConcurrency int
 	maxQueueSize           int
 	globalMaxInflight      int
+	weights                *weights
 }
 
 func NewPool(store *config.Store) *Pool {
@@ -28,6 +29,7 @@ func NewPool(store *config.Store) *Pool {
 		store:                 store,
 		inUse:                 map[string]int{},
 		maxInflightPerAccount: maxPer,
+		weights:               newWeights(),
 	}
 	p.Reset()
 	return p
@@ -70,6 +72,7 @@ func (p *Pool) Reset() {
 	p.recommendedConcurrency = recommended
 	p.maxQueueSize = queueLimit
 	p.globalMaxInflight = globalLimit
+	p.weights.resetAll(ids)
 	config.Logger.Info(
 		"[init_account_queue] initialized",
 		"total", len(ids),
@@ -129,4 +132,39 @@ func (p *Pool) Status() map[string]any {
 		"waiting":                  len(p.waiters),
 		"max_queue_size":           p.maxQueueSize,
 	}
+}
+
+// ReportAccountSuccess records a successful request for the weighted account selection.
+func (p *Pool) ReportAccountSuccess(accountID string) {
+	if p.weights != nil {
+		p.weights.ReportSuccess(accountID)
+	}
+}
+
+// ReportAccountFailure records a failed request for the weighted account selection.
+func (p *Pool) ReportAccountFailure(accountID string) {
+	if p.weights != nil {
+		p.weights.ReportFailure(accountID)
+	}
+}
+
+// ReenableAccount manually re-enables a disabled account.
+func (p *Pool) ReenableAccount(accountID string) bool {
+	if p.weights == nil {
+		return false
+	}
+	return p.weights.Reenable(accountID)
+}
+
+// WeightStatus returns weight state for all accounts.
+func (p *Pool) WeightStatus() []map[string]any {
+	if p.weights == nil {
+		return nil
+	}
+	return p.weights.GetWeightStatus()
+}
+
+// GetWeights returns the weights instance (for acquireLocked access).
+func (p *Pool) GetWeights() *weights {
+	return p.weights
 }

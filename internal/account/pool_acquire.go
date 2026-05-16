@@ -64,20 +64,43 @@ func (p *Pool) acquireLocked(target string, exclude map[string]bool) (config.Acc
 }
 
 func (p *Pool) tryAcquire(exclude map[string]bool) (config.Account, bool) {
-	for i := 0; i < len(p.queue); i++ {
-		id := p.queue[i]
+	// Build list of eligible candidates (not excluded, not at capacity, not disabled).
+	candidates := make([]string, 0, len(p.queue))
+	for _, id := range p.queue {
 		if exclude[id] || !p.canAcquireIDLocked(id) {
 			continue
 		}
-		acc, ok := p.store.FindAccount(id)
-		if !ok {
+		if p.weights != nil && p.weights.IsDisabled(id) {
 			continue
 		}
-		p.inUse[id]++
-		p.bumpQueue(id)
-		return acc, true
+		candidates = append(candidates, id)
 	}
-	return config.Account{}, false
+
+	if len(candidates) == 0 {
+		return config.Account{}, false
+	}
+
+	// Use weighted random selection if weights are available.
+	var pickedID string
+	var ok bool
+	if p.weights != nil {
+		pickedID, ok = p.weights.WeightedPick(candidates)
+	} else {
+		// Fallback: pick first candidate (same as original logic).
+		pickedID = candidates[0]
+		ok = true
+	}
+	if !ok {
+		return config.Account{}, false
+	}
+
+	acc, found := p.store.FindAccount(pickedID)
+	if !found {
+		return config.Account{}, false
+	}
+	p.inUse[pickedID]++
+	p.bumpQueue(pickedID)
+	return acc, true
 }
 
 func (p *Pool) bumpQueue(accountID string) {

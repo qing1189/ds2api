@@ -10,6 +10,9 @@ services:
       - "${DS2API_HOST_PORT:-6011}:5001"
     volumes:
       - ./config.json:/data/config.json   # 配置文件（持久化推荐路径）
+      # ⚠️ 重要：容器内以非 root 用户运行，config.json 需要 world-writable
+      #    在宿主机执行：chmod 666 config.json
+      #    否则增删账号/密钥等写入操作会因权限不足而失败
     environment:
       - TZ=Asia/Shanghai
       - LOG_LEVEL=INFO
