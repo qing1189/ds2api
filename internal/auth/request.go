@@ -32,6 +32,9 @@ type RequestAuth struct {
 	Account        config.Account
 	TriedAccounts  map[string]bool
 	resolver       *Resolver
+
+	requestOutcomeSet bool
+	requestSuccess    bool
 }
 
 type LoginFunc func(ctx context.Context, acc config.Account) (string, error)
@@ -110,6 +113,7 @@ func (r *Resolver) acquireManagedRequestAuth(ctx context.Context, callerID, targ
 			lastEnsureErr = err
 			tried[a.AccountID] = true
 			r.Pool.Release(a.AccountID)
+			r.ReportRequestFailure(a.AccountID)
 			if target != "" {
 				return nil, err
 			}
@@ -181,6 +185,7 @@ func (r *Resolver) MarkTokenInvalid(a *RequestAuth) {
 	a.DeepSeekToken = ""
 	r.clearTokenRefreshMark(a.AccountID)
 	_ = r.Store.UpdateAccountToken(a.AccountID, "")
+	r.ReportRequestFailure(a.AccountID)
 }
 
 func (r *Resolver) SwitchAccount(ctx context.Context, a *RequestAuth) bool {
@@ -224,7 +229,56 @@ func (r *Resolver) Release(a *RequestAuth) {
 	if a == nil || !a.UseConfigToken || a.AccountID == "" {
 		return
 	}
+	// Report outcome if the handler explicitly marked it.
+	if a.requestOutcomeSet {
+		if a.requestSuccess {
+			r.ReportRequestSuccess(a.AccountID)
+		} else {
+			r.ReportRequestFailure(a.AccountID)
+		}
+	}
 	r.Pool.Release(a.AccountID)
+}
+
+// ReportRequestSuccess records a successful request for weighted account selection.
+func (r *Resolver) ReportRequestSuccess(accountID string) {
+	if accountID == "" {
+		return
+	}
+	r.Pool.ReportAccountSuccess(accountID)
+}
+
+// ReportRequestFailure records a failed request for weighted account selection.
+func (r *Resolver) ReportRequestFailure(accountID string) {
+	if accountID == "" {
+		return
+	}
+	r.Pool.ReportAccountFailure(accountID)
+}
+
+func (a *RequestAuth) ReportSuccess() {
+	if a == nil || a.resolver == nil {
+		return
+	}
+	a.resolver.ReportRequestSuccess(a.AccountID)
+}
+
+func (a *RequestAuth) ReportFailure() {
+	if a == nil || a.resolver == nil {
+		return
+	}
+	a.resolver.ReportRequestFailure(a.AccountID)
+}
+
+// MarkOutcome marks the request as successful or failed after completion.
+// The outcome is reported when the account is released. If MarkOutcome is not called,
+// no outcome is reported (failures are still tracked via MarkTokenInvalid etc).
+func (a *RequestAuth) MarkOutcome(success bool) {
+	if a == nil {
+		return
+	}
+	a.requestOutcomeSet = true
+	a.requestSuccess = success
 }
 
 func extractCallerToken(req *http.Request) string {

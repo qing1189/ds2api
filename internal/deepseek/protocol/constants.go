@@ -4,6 +4,8 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"strings"
 )
 
 const (
@@ -128,6 +130,57 @@ func buildBaseHeaders(client clientConstants, overrides map[string]string) map[s
 	}
 	if client.Locale != "" {
 		out["x-client-locale"] = client.Locale
+	}
+	return out
+}
+
+// uaVariants is a pool of realistic User-Agent strings simulating different
+// DeepSeek app versions and Android API levels, used for rotation to reduce
+// fingerprint-based risk control detection.
+var uaVariants = func() []string {
+	platforms := []string{"android"}
+	locales := []string{"zh_CN", "en_US", "zh_TW"}
+	uaCombos := []struct {
+		name  string
+		ver   string
+		apiLv string
+	}{
+		{"DeepSeek", "2.0.4", "35"}, // 基线版本
+		{"DeepSeek", "2.0.3", "34"},
+		{"DeepSeek", "2.1.0", "35"},
+		{"DeepSeek", "2.1.1", "35"},
+		{"DeepSeek", "2.0.5", "34"},
+		{"DeepSeek", "2.2.0", "36"},
+	}
+	seen := map[string]bool{}
+	var result []string
+	for _, combo := range uaCombos {
+		for _, plat := range platforms {
+			for _, loc := range locales {
+				ua := combo.name + "/" + combo.ver + " Android/" + combo.apiLv
+				key := ua + "|" + plat + "|" + loc
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				result = append(result, ua+"|"+plat+"|"+loc+"|"+combo.ver)
+			}
+		}
+	}
+	return result
+}()
+
+// RandomBaseHeaders returns a fresh copy of base headers with a randomly
+// selected User-Agent and matching platform/version/locale values.
+func RandomBaseHeaders() map[string]string {
+	out := cloneStringMap(defaultStaticBaseHeaders)
+	variant := uaVariants[rand.Intn(len(uaVariants))]
+	parts := strings.Split(variant, "|")
+	if len(parts) == 4 {
+		out["User-Agent"] = parts[0]
+		out["x-client-platform"] = parts[1]
+		out["x-client-locale"] = parts[2]
+		out["x-client-version"] = parts[3]
 	}
 	return out
 }

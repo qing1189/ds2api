@@ -14,6 +14,7 @@ import (
 )
 
 func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) {
+	c.Jitter()
 	clients := c.requestClientsForAccount(acc)
 	payload := map[string]any{
 		"password":  strings.TrimSpace(acc.Password),
@@ -29,7 +30,7 @@ func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) 
 	} else {
 		return "", errors.New("missing email/mobile")
 	}
-	resp, err := c.postJSON(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekLoginURL, dsprotocol.BaseHeaders, payload)
+	resp, err := c.postJSON(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekLoginURL, dsprotocol.RandomBaseHeaders(), payload)
 	if err != nil {
 		return "", err
 	}
@@ -51,6 +52,12 @@ func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) 
 }
 
 func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAttempts int) (string, error) {
+	c.Jitter()
+	// Try to reuse a cached session for this account.
+	if cached := c.getCachedSession(a.AccountID); cached != "" {
+		config.Logger.Info("[create_session] reusing cached session", "account", a.AccountID, "session", cached)
+		return cached, nil
+	}
 	if maxAttempts <= 0 {
 		maxAttempts = c.maxRetries
 	}
@@ -69,6 +76,7 @@ func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAtte
 		if status == http.StatusOK && code == 0 && bizCode == 0 {
 			sessionID := extractCreateSessionID(resp)
 			if sessionID != "" {
+				c.cacheSession(a.AccountID, sessionID)
 				return sessionID, nil
 			}
 		}
@@ -76,11 +84,13 @@ func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAtte
 		if a.UseConfigToken {
 			if !refreshed && shouldAttemptRefresh(status, code, bizCode, msg, bizMsg) {
 				if c.Auth.RefreshToken(ctx, a) {
+					c.invalidateSessionCache(a.AccountID)
 					refreshed = true
 					continue
 				}
 			}
 			if c.Auth.SwitchAccount(ctx, a) {
+				c.invalidateSessionCache(a.AccountID)
 				refreshed = false
 				attempts++
 				continue
@@ -96,6 +106,7 @@ func (c *Client) GetPow(ctx context.Context, a *auth.RequestAuth, maxAttempts in
 }
 
 func (c *Client) GetPowForTarget(ctx context.Context, a *auth.RequestAuth, targetPath string, maxAttempts int) (string, error) {
+	c.Jitter()
 	if maxAttempts <= 0 {
 		maxAttempts = c.maxRetries
 	}
@@ -159,10 +170,7 @@ func (c *Client) GetPowForTarget(ctx context.Context, a *auth.RequestAuth, targe
 }
 
 func (c *Client) authHeaders(token string) map[string]string {
-	headers := make(map[string]string, len(dsprotocol.BaseHeaders)+1)
-	for k, v := range dsprotocol.BaseHeaders {
-		headers[k] = v
-	}
+	headers := dsprotocol.RandomBaseHeaders()
 	headers["authorization"] = "Bearer " + token
 	return headers
 }
