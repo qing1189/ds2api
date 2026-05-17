@@ -200,7 +200,16 @@
         "lastSuccess": "最后成功",
         "weightDetailTitle": "权重详情",
         "currentWeight": "当前权重",
-        "successRate": "成功率"
+        "successRate": "成功率",
+        "weightTabAll": "全部",
+        "weightTabHealthy": "正常",
+        "weightTabDegraded": "降权",
+        "weightTabDisabled": "禁用",
+        "weightSearchPlaceholder": "搜索账号...",
+        "weightStatusLabel": "状态",
+        "weightEmptyHealthy": "暂无正常账号",
+        "weightEmptyDegraded": "暂无降权账号",
+        "weightEmptyDisabled": "暂无禁用账号"
     },
     "proxyManager": {
         "title": "代理 IP",
