@@ -188,7 +188,19 @@
         "degradeDetail": "失败{fail}次/成功{succ}次",
         "noWeightData": "暂无权重数据",
         "reenable": "重新启用",
-        "reenableSuccess": "账号已重新启用"
+        "reenableSuccess": "账号已重新启用",
+        "disableConfirm": "确定要禁用账号 {id} 吗？禁用后该账号将不会被智能轮询选中。",
+        "disableSuccess": "账号已禁用",
+        "disableAccount": "禁用账号",
+        "disableTitle": "手动禁用此账号",
+        "disableReasonAuto": "自动禁用",
+        "disableReasonManual": "手动禁用",
+        "disabledAt": "禁用于",
+        "weightStats": "成功 {succ} / 失败 {fail} / 总计 {total}",
+        "lastSuccess": "最后成功",
+        "weightDetailTitle": "权重详情",
+        "currentWeight": "当前权重",
+        "successRate": "成功率"
     },
     "proxyManager": {
         "title": "代理 IP",

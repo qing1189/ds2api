@@ -40,3 +40,27 @@ func (h *Handler) reenableAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "启用失败"})
 	}
 }
+
+func (h *Handler) disableAccount(w http.ResponseWriter, r *http.Request) {
+	identifier := chi.URLParam(r, "identifier")
+	if decoded, err := url.PathUnescape(identifier); err == nil {
+		identifier = decoded
+	}
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "identifier 不能为空"})
+		return
+	}
+
+	// Check the account exists in config.
+	if _, ok := findAccountByIdentifier(h.Store, identifier); !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"detail": "账号不存在"})
+		return
+	}
+
+	if h.Pool.DisableAccount(identifier) {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "账号已禁用"})
+	} else {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "禁用失败"})
+	}
+}

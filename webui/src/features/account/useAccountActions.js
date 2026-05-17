@@ -366,6 +366,27 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
         }
     }
 
+    const disableAccount = async (identifier) => {
+        const accountID = String(identifier || '').trim()
+        if (!accountID) return
+        if (!confirm(t('accountManager.disableConfirm', { id: accountID }))) return
+        setReenableLoading(prev => ({ ...prev, [accountID]: true }))
+        try {
+            const res = await apiFetch(`/admin/queue/disable/${encodeURIComponent(accountID)}`, { method: 'POST' })
+            const data = await res.json()
+            if (res.ok) {
+                onMessage('success', t('accountManager.disableSuccess'))
+                onRefresh()
+            } else {
+                onMessage('error', data.detail || t('messages.requestFailed'))
+            }
+        } catch (e) {
+            onMessage('error', t('messages.networkError'))
+        } finally {
+            setReenableLoading(prev => ({ ...prev, [accountID]: false }))
+        }
+    }
+
     return {
         showAddKey,
         openAddKey,
@@ -404,6 +425,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
         deleteAllSessions,
         updateAccountProxy,
         reenableAccount,
+        disableAccount,
         reenableLoading,
     }
 }

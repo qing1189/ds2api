@@ -17,6 +17,7 @@ func RegisterRoutes(r chi.Router, h *Handler) {
 	r.Get("/queue/status", h.queueStatus)
 	r.Get("/queue/weights", h.queueWeights)
 	r.Post("/queue/reenable/{identifier}", h.reenableAccount)
+	r.Post("/queue/disable/{identifier}", h.disableAccount)
 	r.Post("/accounts/test", h.testSingleAccount)
 	r.Post("/accounts/test-all", h.testAllAccounts)
 	r.Post("/accounts/sessions/delete-all", h.deleteAllSessions)

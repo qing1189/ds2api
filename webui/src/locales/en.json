@@ -188,7 +188,19 @@
         "degradeDetail": "{fail} fail / {succ} success",
         "noWeightData": "No weight data available",
         "reenable": "Re-enable",
-        "reenableSuccess": "Account re-enabled"
+        "reenableSuccess": "Account re-enabled",
+        "disableConfirm": "Are you sure you want to disable {id}? It will be excluded from smart routing until re-enabled.",
+        "disableSuccess": "Account disabled",
+        "disableAccount": "Disable account",
+        "disableTitle": "Manually disable this account",
+        "disableReasonAuto": "Auto-disabled",
+        "disableReasonManual": "Manually disabled",
+        "disabledAt": "Disabled at",
+        "weightStats": "{succ} success / {fail} fail / {total} total",
+        "lastSuccess": "Last success",
+        "weightDetailTitle": "Weight details",
+        "currentWeight": "Current weight",
+        "successRate": "Success rate"
     },
     "proxyManager": {
         "title": "Proxy IPs",
