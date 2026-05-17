@@ -1,10 +1,11 @@
-import { useState } from 'react'
-import { ChevronLeft, ChevronRight, Check, Copy, Pencil, Play, Plus, Trash2, FolderX } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { ChevronLeft, ChevronRight, Check, Copy, Pencil, Play, Plus, Trash2, FolderX, Ban, UserCheck, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function AccountsTable({
     t,
     accounts,
+    weights,
     loadingAccounts,
     testing,
     testingAll,
@@ -25,6 +26,9 @@ export default function AccountsTable({
     onDeleteAccount,
     onDeleteAllSessions,
     onUpdateAccountProxy,
+    onDisableAccount,
+    onReenableAccount,
+    reenableLoading,
     onPrevPage,
     onNextPage,
     onPageSizeChange,
@@ -33,6 +37,16 @@ export default function AccountsTable({
     envBacked = false,
 }) {
     const [copiedId, setCopiedId] = useState(null)
+
+    const weightMap = useMemo(() => {
+        const map = {}
+        if (Array.isArray(weights)) {
+            for (const w of weights) {
+                if (w && w.account_id) map[w.account_id] = w
+            }
+        }
+        return map
+    }, [weights])
 
     const copyId = (id) => {
         navigator.clipboard.writeText(id).then(() => {
@@ -109,11 +123,20 @@ export default function AccountsTable({
                         const assignedProxy = proxies.find(proxy => proxy.id === acc.proxy_id)
                         const runtimeUnknown = envBacked && !acc.test_status
                         const isActive = acc.test_status === 'ok' || acc.has_token
+                        const weightInfo = id ? weightMap[id] : null
+                        const isDisabled = Boolean(weightInfo?.disabled)
+                        const isManualDisabled = isDisabled && weightInfo?.disable_reason === 'manual'
+                        const isDegraded = !isDisabled && weightInfo && weightInfo.current_weight < weightInfo.max_weight
                         return (
-                            <div key={i} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-muted/50 transition-colors">
+                            <div key={i} className={clsx(
+                                "p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-muted/50 transition-colors",
+                                isDisabled && "bg-red-500/[0.03]"
+                            )}>
                                 <div className="flex items-center gap-3 min-w-0">
                                     <div className={clsx(
                                         "w-2 h-2 rounded-full shrink-0",
+                                        isDisabled ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
+                                        isDegraded ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
                                         acc.test_status === 'failed' ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
                                         isActive ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
                                         runtimeUnknown ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "bg-amber-500"
@@ -133,11 +156,26 @@ export default function AccountsTable({
                                         {acc.remark && (
                                             <div className="text-xs text-muted-foreground truncate mt-0.5">{acc.remark}</div>
                                         )}
-                                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                                        <div className="flex items-center flex-wrap gap-2 text-xs text-muted-foreground mt-0.5">
                                             <span>{acc.test_status === 'failed' ? t('accountManager.testStatusFailed') : isActive ? t('accountManager.sessionActive') : runtimeUnknown ? t('accountManager.runtimeStatusUnknown') : t('accountManager.reauthRequired')}</span>
                                             {acc.token_preview && (
                                                 <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-[10px]">
                                                     {acc.token_preview}
+                                                </span>
+                                            )}
+                                            {weightInfo && (
+                                                <span className={clsx(
+                                                    "font-mono px-1.5 py-0.5 rounded text-[10px]",
+                                                    isDisabled ? "bg-red-500/10 text-red-500" :
+                                                    isDegraded ? "bg-amber-500/10 text-amber-500" :
+                                                    "bg-emerald-500/10 text-emerald-500"
+                                                )}>
+                                                    {t('accountManager.currentWeight')}: {weightInfo.current_weight}/{weightInfo.max_weight}
+                                                </span>
+                                            )}
+                                            {isDisabled && (
+                                                <span className="font-medium px-1.5 py-0.5 rounded text-[10px] bg-red-500/10 text-red-500">
+                                                    {isManualDisabled ? t('accountManager.disableReasonManual') : t('accountManager.disableReasonAuto')}
                                                 </span>
                                             )}
                                             {sessionCounts && sessionCounts[id] !== undefined && (
@@ -196,6 +234,29 @@ export default function AccountsTable({
                                     >
                                         {testing[id] ? t('actions.testing') : t('actions.test')}
                                     </button>
+                                    {isDisabled ? (
+                                        <button
+                                            onClick={() => onReenableAccount(id)}
+                                            disabled={!id || (reenableLoading && reenableLoading[id])}
+                                            title={t('accountManager.reenable')}
+                                            className="p-1 lg:p-1.5 text-emerald-500 hover:bg-emerald-500/10 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            {reenableLoading && reenableLoading[id]
+                                                ? <Loader2 className="w-3.5 h-3.5 lg:w-4 lg:h-4 animate-spin" />
+                                                : <UserCheck className="w-3.5 h-3.5 lg:w-4 lg:h-4" />}
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={() => onDisableAccount(id)}
+                                            disabled={!id || (reenableLoading && reenableLoading[id])}
+                                            title={t('accountManager.disableTitle')}
+                                            className="p-1 lg:p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            {reenableLoading && reenableLoading[id]
+                                                ? <Loader2 className="w-3.5 h-3.5 lg:w-4 lg:h-4 animate-spin" />
+                                                : <Ban className="w-3.5 h-3.5 lg:w-4 lg:h-4" />}
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => onDeleteAccount(id)}
                                         className="p-1 lg:p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-colors"

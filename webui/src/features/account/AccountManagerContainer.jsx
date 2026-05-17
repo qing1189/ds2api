@@ -69,6 +69,7 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
         deleteAllSessions,
         updateAccountProxy,
         reenableAccount,
+        disableAccount,
         reenableLoading,
     } = useAccountActions({
         apiFetch,
@@ -127,6 +128,7 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
             <AccountsTable
                 t={t}
                 accounts={accounts}
+                weights={weights}
                 loadingAccounts={loadingAccounts}
                 testing={testing}
                 testingAll={testingAll}
@@ -147,6 +149,9 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
                 onDeleteAccount={deleteAccount}
                 onDeleteAllSessions={deleteAllSessions}
                 onUpdateAccountProxy={updateAccountProxy}
+                onDisableAccount={disableAccount}
+                onReenableAccount={reenableAccount}
+                reenableLoading={reenableLoading}
                 onPrevPage={() => fetchAccounts(page - 1)}
                 onNextPage={() => fetchAccounts(page + 1)}
                 onPageSizeChange={changePageSize}

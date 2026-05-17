@@ -156,6 +156,15 @@ func (p *Pool) ReenableAccount(accountID string) bool {
 	return p.weights.Reenable(accountID)
 }
 
+// DisableAccount manually disables an account so the smart router skips it
+// until it is re-enabled by an admin.
+func (p *Pool) DisableAccount(accountID string) bool {
+	if p.weights == nil {
+		return false
+	}
+	return p.weights.Disable(accountID)
+}
+
 // WeightStatus returns weight state for all accounts.
 func (p *Pool) WeightStatus() []map[string]any {
 	if p.weights == nil {

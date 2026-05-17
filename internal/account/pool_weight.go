@@ -23,6 +23,16 @@ const (
 	WeightCheckInterval = 1 * time.Minute
 )
 
+// DisableReason indicates why an account was disabled.
+type DisableReason string
+
+const (
+	// DisableReasonAuto means the account was auto-disabled by the weight system after repeated failures.
+	DisableReasonAuto DisableReason = "auto"
+	// DisableReasonManual means an administrator manually disabled the account from the UI/API.
+	DisableReasonManual DisableReason = "manual"
+)
+
 type accountWeightState struct {
 	maxWeight            int
 	currentWeight        int
@@ -30,7 +40,9 @@ type accountWeightState struct {
 	consecutiveSuccesses int
 	lastFailureAt        time.Time
 	lastSuccessAt        time.Time
-	disabled             bool // true when weight hits 0, requires admin re-enable
+	disabled             bool          // true when weight hits 0 OR admin manually disabled
+	disableReason        DisableReason // how the account was disabled
+	disabledAt           time.Time     // when the account was disabled
 
 	totalRequests int
 	successCount  int
@@ -124,7 +136,7 @@ func (w *weights) ReportSuccess(accountID string) {
 }
 
 // ReportFailure records a failed request for an account.
-// Reduces weight by WeightDegradeFactor * maxWeight. If weight hits 0, account is disabled.
+// Reduces weight by WeightDegradeFactor * maxWeight. If weight hits 0, account is auto-disabled.
 func (w *weights) ReportFailure(accountID string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -145,7 +157,9 @@ func (w *weights) ReportFailure(accountID string) {
 	if state.currentWeight <= 0 {
 		state.currentWeight = 0
 		state.disabled = true
-		config.Logger.Warn("[weight] account disabled due to repeated failures",
+		state.disableReason = DisableReasonAuto
+		state.disabledAt = time.Now()
+		config.Logger.Warn("[weight] account auto-disabled due to repeated failures",
 			"account", accountID,
 			"consecutive_fails", state.consecutiveFails,
 		)
@@ -158,6 +172,33 @@ func (w *weights) ReportFailure(accountID string) {
 		"max_weight", state.maxWeight,
 		"consecutive_fails", state.consecutiveFails,
 	)
+}
+
+// Disable manually disables an account regardless of its current weight.
+// Returns true when the account exists. If it's already disabled, the reason
+// is upgraded to manual but no other state is changed.
+func (w *weights) Disable(accountID string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	state, ok := w.states[accountID]
+	if !ok {
+		return false
+	}
+	if state.disabled {
+		// Already disabled (auto or manual). Mark as manual so admins know it
+		// won't recover automatically.
+		state.disableReason = DisableReasonManual
+		return true
+	}
+	state.disabled = true
+	state.disableReason = DisableReasonManual
+	state.disabledAt = time.Now()
+	state.currentWeight = 0
+	state.consecutiveSuccesses = 0
+	config.Logger.Warn("[weight] account disabled by admin",
+		"account", accountID,
+	)
+	return true
 }
 
 // Reenable manually re-enables a disabled account, restoring its weight.
@@ -177,6 +218,8 @@ func (w *weights) Reenable(accountID string) bool {
 	state.currentWeight = state.maxWeight
 	state.consecutiveFails = 0
 	state.consecutiveSuccesses = 0
+	state.disableReason = ""
+	state.disabledAt = time.Time{}
 	config.Logger.Info("[weight] account re-enabled by admin",
 		"account", accountID,
 		"weight", state.maxWeight,
@@ -296,11 +339,17 @@ func (w *weights) GetWeightStatus() []map[string]any {
 	result := make([]map[string]any, 0, len(ids))
 	for _, id := range ids {
 		state := w.states[id]
+		var reason any
+		if state.disabled && state.disableReason != "" {
+			reason = string(state.disableReason)
+		}
 		result = append(result, map[string]any{
 			"account_id":            id,
 			"max_weight":            state.maxWeight,
 			"current_weight":        state.currentWeight,
 			"disabled":              state.disabled,
+			"disable_reason":        reason,
+			"disabled_at":           formatTimeOrNil(state.disabledAt),
 			"consecutive_fails":     state.consecutiveFails,
 			"consecutive_successes": state.consecutiveSuccesses,
 			"last_failure_at":       formatTimeOrNil(state.lastFailureAt),
