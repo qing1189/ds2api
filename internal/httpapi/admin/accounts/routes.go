@@ -18,6 +18,7 @@ func RegisterRoutes(r chi.Router, h *Handler) {
 	r.Get("/queue/weights", h.queueWeights)
 	r.Post("/queue/reenable/{identifier}", h.reenableAccount)
 	r.Post("/queue/disable/{identifier}", h.disableAccount)
+	r.Post("/queue/rotate-fingerprints", h.rotateFingerprints)
 	r.Get("/stats/accounts", h.statsAccounts)
 	r.Get("/stats/keys", h.statsKeys)
 	r.Post("/stats/reset", h.statsReset)

@@ -24,11 +24,15 @@ const (
 	DeepSeekUploadTargetPath     = "/api/v0/file/upload_file"
 )
 
+// defaultStaticBaseHeaders are the headers that real DeepSeek Android clients
+// (OkHttp-based) consistently send. We deliberately omit "accept-charset"
+// because modern Android OkHttp does not send it, and including it makes the
+// request look like a Python/curl client.
 var defaultStaticBaseHeaders = map[string]string{
-	"Host":           "chat.deepseek.com",
-	"Accept":         "application/json",
-	"Content-Type":   "application/json",
-	"accept-charset": "UTF-8",
+	"Host":            "chat.deepseek.com",
+	"Accept":          "application/json",
+	"Content-Type":    "application/json",
+	"Accept-Encoding": "gzip, deflate, br",
 }
 
 var defaultSkipContainsPatterns = []string{
@@ -134,9 +138,9 @@ func buildBaseHeaders(client clientConstants, overrides map[string]string) map[s
 	return out
 }
 
-// uaVariants is a pool of realistic User-Agent strings simulating different
-// DeepSeek app versions and Android API levels, used for rotation to reduce
-// fingerprint-based risk control detection.
+// uaVariants is kept for backwards compatibility with any callers that need a
+// quick rotation pool independent from a specific account. New code should
+// prefer BaseHeadersForFingerprint, which gives each account a stable identity.
 var uaVariants = func() []string {
 	platforms := []string{"android"}
 	locales := []string{"zh_CN", "en_US", "zh_TW"}
@@ -170,8 +174,11 @@ var uaVariants = func() []string {
 	return result
 }()
 
-// RandomBaseHeaders returns a fresh copy of base headers with a randomly
-// selected User-Agent and matching platform/version/locale values.
+// RandomBaseHeaders returns headers with a random User-Agent picked from the
+// shared pool. This is kept for backwards compatibility; new call sites
+// should use BaseHeadersForFingerprint(accountID) so each account presents a
+// stable identity rather than rotating per request (which itself is a
+// suspicious signal).
 func RandomBaseHeaders() map[string]string {
 	out := cloneStringMap(defaultStaticBaseHeaders)
 	variant := uaVariants[rand.Intn(len(uaVariants))]
@@ -181,6 +188,42 @@ func RandomBaseHeaders() map[string]string {
 		out["x-client-platform"] = parts[1]
 		out["x-client-locale"] = parts[2]
 		out["x-client-version"] = parts[3]
+	}
+	return out
+}
+
+// BaseHeadersForFingerprint builds a fresh header map keyed to the given
+// account fingerprint. The same accountID always produces the same UA,
+// locale, x-app-build and x-device-id so DeepSeek-side risk control sees a
+// consistent device per account, instead of values shuffling on every request.
+//
+// Callers must still set Authorization themselves; this function only fills
+// in the device-identity surface (User-Agent, locale, build, device id, etc).
+func BaseHeadersForFingerprint(fp AccountFingerprint) map[string]string {
+	out := cloneStringMap(defaultStaticBaseHeaders)
+	if fp.UserAgent != "" {
+		out["User-Agent"] = fp.UserAgent
+	}
+	if fp.Platform != "" {
+		out["x-client-platform"] = fp.Platform
+	}
+	if fp.Version != "" {
+		out["x-client-version"] = fp.Version
+	}
+	if fp.Locale != "" {
+		out["x-client-locale"] = fp.Locale
+	}
+	if fp.AcceptLang != "" {
+		out["Accept-Language"] = fp.AcceptLang
+	}
+	if fp.BuildNumber != "" {
+		out["x-app-build"] = fp.BuildNumber
+	}
+	if fp.APILevel != "" {
+		out["x-os-version"] = fp.APILevel
+	}
+	if fp.DeviceID != "" {
+		out["x-device-id"] = fp.DeviceID
 	}
 	return out
 }

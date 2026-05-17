@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -129,10 +130,17 @@ func (c *Client) invalidateSessionCache(accountID string) {
 }
 
 // initJitter reads jitter configuration from environment variables once.
+//
+// Two ranges are supported:
+//   - DS2API_REQUEST_JITTER_{MIN,MAX}_MS: applied to every individual upstream
+//     call (login, create_session, get_pow, completion). Defaults are kept
+//     small so total per-request stack stays under ~1s in the worst case.
+//   - The legacy alias of identical default 200/800 is preserved when the
+//     operator has not changed defaults.
 func (c *Client) initJitter() {
 	c.jitterOnce.Do(func() {
-		minMs := envInt("DS2API_REQUEST_JITTER_MIN_MS", 200)
-		maxMs := envInt("DS2API_REQUEST_JITTER_MAX_MS", 800)
+		minMs := envInt("DS2API_REQUEST_JITTER_MIN_MS", 80)
+		maxMs := envInt("DS2API_REQUEST_JITTER_MAX_MS", 350)
 		if minMs < 0 {
 			minMs = 0
 		}
@@ -145,18 +153,65 @@ func (c *Client) initJitter() {
 }
 
 // Jitter sleeps for a random duration between min and max configured jitter.
-// If both are 0, no delay is added. Call before each external API request
-// to simulate human-like timing and reduce risk-control detection.
+// The sleep follows a right-skewed distribution (log-uniform) so most calls
+// finish near the lower bound while a small tail occasionally stretches
+// toward the upper bound, mimicking human-driven mobile networks. Pure
+// uniform random is itself a fingerprint-able pattern.
+//
+// If both min and max are 0, no delay is added. The jitter respects an
+// optional context to remain cancellable.
 func (c *Client) Jitter() {
+	c.JitterCtx(context.Background())
+}
+
+// JitterCtx is the context-aware variant of Jitter.
+func (c *Client) JitterCtx(ctx context.Context) {
 	c.initJitter()
 	if c.jitterMaxMs <= 0 {
 		return
 	}
-	d := c.jitterMinMs
-	if c.jitterMaxMs > c.jitterMinMs {
-		d += rand.Intn(c.jitterMaxMs - c.jitterMinMs + 1)
+	d := pickJitterDelay(c.jitterMinMs, c.jitterMaxMs)
+	if d <= 0 {
+		return
 	}
-	time.Sleep(time.Duration(d) * time.Millisecond)
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+}
+
+// pickJitterDelay returns a random delay between minMs and maxMs that is
+// log-uniform: the closer to the lower bound, the more likely. We sample
+// from x = exp(ln(min+1) + r * (ln(max+1) - ln(min+1))) - 1.
+//
+// Examples (min=200, max=800):
+//
+//	~50% of values land in [200, 400]
+//	~30% land in [400, 600]
+//	~20% land in [600, 800]
+//
+// Pure uniform sampling is rejected because constant-rate request timing is
+// itself a fingerprint that automated traffic detectors flag easily.
+func pickJitterDelay(minMs, maxMs int) time.Duration {
+	if maxMs <= 0 {
+		return 0
+	}
+	if minMs >= maxMs {
+		return time.Duration(maxMs) * time.Millisecond
+	}
+	lnLo := math.Log(float64(minMs) + 1)
+	lnHi := math.Log(float64(maxMs) + 1)
+	r := rand.Float64()
+	v := math.Exp(lnLo+r*(lnHi-lnLo)) - 1
+	if v < float64(minMs) {
+		v = float64(minMs)
+	}
+	if v > float64(maxMs) {
+		v = float64(maxMs)
+	}
+	return time.Duration(v) * time.Millisecond
 }
 
 // envInt returns the integer value of an env var, or a default if unset/invalid.
