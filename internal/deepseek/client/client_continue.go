@@ -54,7 +54,7 @@ func (c *Client) callContinue(ctx context.Context, a *auth.RequestAuth, sessionI
 		return nil, errors.New("missing continue identifiers")
 	}
 	clients := c.requestClientsForAuth(ctx, a)
-	headers := c.authHeaders(a.DeepSeekToken)
+	headers := c.authHeadersForAuth(a)
 	headers["x-ds-pow-response"] = powResp
 	payload := map[string]any{
 		"chat_session_id":    sessionID,

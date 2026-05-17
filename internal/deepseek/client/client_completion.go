@@ -16,7 +16,7 @@ func (c *Client) CallCompletion(ctx context.Context, a *auth.RequestAuth, payloa
 	_ = maxAttempts
 	c.Jitter()
 	clients := c.requestClientsForAuth(ctx, a)
-	headers := c.authHeaders(a.DeepSeekToken)
+	headers := c.authHeadersForAuth(a)
 	headers["x-ds-pow-response"] = powResp
 	captureSession := c.capture.Start("deepseek_completion", dsprotocol.DeepSeekCompletionURL, a.AccountID, payload)
 	resp, err := c.streamPostOnce(ctx, clients.stream, dsprotocol.DeepSeekCompletionURL, headers, payload)

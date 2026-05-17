@@ -5,6 +5,7 @@ import (
 	dsprotocol "ds2api/internal/deepseek/protocol"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
 	"unicode"
@@ -30,7 +31,9 @@ func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) 
 	} else {
 		return "", errors.New("missing email/mobile")
 	}
-	resp, err := c.postJSON(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekLoginURL, dsprotocol.RandomBaseHeaders(), payload)
+	loginHeaders := dsprotocol.BaseHeadersForFingerprint(dsprotocol.FingerprintForAccount(acc.Identifier()))
+	loginHeaders["x-trace-id"] = newTraceID()
+	resp, err := c.postJSON(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekLoginURL, loginHeaders, payload)
 	if err != nil {
 		return "", err
 	}
@@ -65,7 +68,7 @@ func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAtte
 	attempts := 0
 	refreshed := false
 	for attempts < maxAttempts {
-		headers := c.authHeaders(a.DeepSeekToken)
+		headers := c.authHeadersForAuth(a)
 		resp, status, err := c.postJSONWithStatus(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekCreateSessionURL, headers, map[string]any{"agent": "chat"})
 		if err != nil {
 			config.Logger.Warn("[create_session] request error", "error", err, "account", a.AccountID)
@@ -120,7 +123,7 @@ func (c *Client) GetPowForTarget(ctx context.Context, a *auth.RequestAuth, targe
 	lastFailureKind := FailureUnknown
 	lastFailureMessage := ""
 	for attempts < maxAttempts {
-		headers := c.authHeaders(a.DeepSeekToken)
+		headers := c.authHeadersForAuth(a)
 		resp, status, err := c.postJSONWithStatus(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekCreatePowURL, headers, map[string]any{"target_path": targetPath})
 		if err != nil {
 			config.Logger.Warn("[get_pow] request error", "error", err, "account", a.AccountID, "target_path", targetPath)
@@ -170,9 +173,51 @@ func (c *Client) GetPowForTarget(ctx context.Context, a *auth.RequestAuth, targe
 }
 
 func (c *Client) authHeaders(token string) map[string]string {
-	headers := dsprotocol.RandomBaseHeaders()
-	headers["authorization"] = "Bearer " + token
+	return c.authHeadersForFingerprint(token, "")
+}
+
+// authHeadersForAuth builds request headers using the account-stable
+// fingerprint when available. Falls back to a per-process random fingerprint
+// for direct-token requests where no account ID is known.
+func (c *Client) authHeadersForAuth(a *auth.RequestAuth) map[string]string {
+	if a == nil {
+		return c.authHeaders("")
+	}
+	return c.authHeadersForFingerprint(a.DeepSeekToken, a.AccountID)
+}
+
+// authHeadersForFingerprint composes the full DeepSeek request header set:
+//   - device-stable fingerprint (UA, locale, build, device id)
+//   - per-request x-trace-id so server-side logs can correlate requests but
+//     the value rotates each call (real clients also rotate trace-ids).
+//   - Bearer authorization when a token is supplied.
+func (c *Client) authHeadersForFingerprint(token, accountID string) map[string]string {
+	fp := dsprotocol.FingerprintForAccount(accountID)
+	headers := dsprotocol.BaseHeadersForFingerprint(fp)
+	headers["x-trace-id"] = newTraceID()
+	if t := strings.TrimSpace(token); t != "" {
+		headers["authorization"] = "Bearer " + t
+	}
 	return headers
+}
+
+// newTraceID returns a UUIDv4-style identifier without hyphens, matching the
+// shape DeepSeek's Android client appears to use for x-trace-id. We use
+// math/rand because the value only needs to be unique per request, not
+// cryptographically random.
+func newTraceID() string {
+	b := make([]byte, 16)
+	rand.Read(b) //nolint:gosec
+	// RFC 4122 variant + version bits, mostly cosmetic for our purposes.
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	const hex = "0123456789abcdef"
+	out := make([]byte, 32)
+	for i, v := range b {
+		out[i*2] = hex[v>>4]
+		out[i*2+1] = hex[v&0x0f]
+	}
+	return string(out)
 }
 
 func isTokenInvalid(status int, code int, bizCode int, msg string, bizMsg string) bool {

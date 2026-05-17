@@ -10,7 +10,7 @@
     "Host": "chat.deepseek.com",
     "Accept": "application/json",
     "Content-Type": "application/json",
-    "accept-charset": "UTF-8"
+    "Accept-Encoding": "gzip, deflate, br"
   },
   "skip_contains_patterns": [
     "quasi_status",
