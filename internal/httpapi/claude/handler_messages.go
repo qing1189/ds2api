@@ -113,6 +113,8 @@ func (h *Handler) handleClaudeDirect(w http.ResponseWriter, r *http.Request) boo
 	if historySession != nil {
 		historySession.SuccessTurn(http.StatusOK, result.Turn, responsehistory.GenericUsage(result.Turn))
 	}
+	a.MarkOutcome(true)
+	a.MarkUsage(result.Turn.Usage.InputTokens, result.Turn.Usage.OutputTokens)
 	writeJSON(w, http.StatusOK, claudefmt.BuildMessageResponseFromTurn(
 		fmt.Sprintf("msg_%d", time.Now().UnixNano()),
 		stdReq.ResponseModel,
@@ -396,6 +398,7 @@ func (h *Handler) handleClaudeStreamRealtimeWithRetry(w http.ResponseWriter, r *
 		promptTokenText,
 		historySession,
 	)
+	streamRuntime.auth = a
 	streamRuntime.sendMessageStart()
 
 	completionruntime.ExecuteStreamWithRetry(r.Context(), h.DS, a, resp, payload, pow, completionruntime.StreamRetryOptions{

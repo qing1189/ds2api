@@ -18,6 +18,7 @@ type Pool struct {
 	maxQueueSize           int
 	globalMaxInflight      int
 	weights                *weights
+	stats                  *stats
 }
 
 func NewPool(store *config.Store) *Pool {
@@ -30,6 +31,7 @@ func NewPool(store *config.Store) *Pool {
 		inUse:                 map[string]int{},
 		maxInflightPerAccount: maxPer,
 		weights:               newWeights(),
+		stats:                 newStats(),
 	}
 	p.Reset()
 	return p
@@ -176,4 +178,56 @@ func (p *Pool) WeightStatus() []map[string]any {
 // GetWeights returns the weights instance (for acquireLocked access).
 func (p *Pool) GetWeights() *weights {
 	return p.weights
+}
+
+// RecordRequestSuccess records a successful request including token usage,
+// keyed by both account ID and API key. Either id may be empty; empty ids are skipped.
+func (p *Pool) RecordRequestSuccess(accountID, apiKey string, inputTokens, outputTokens int) {
+	if p.stats != nil {
+		p.stats.RecordSuccess(accountID, apiKey, inputTokens, outputTokens)
+	}
+}
+
+// RecordRequestFailure records a failed request keyed by both account ID and API key.
+func (p *Pool) RecordRequestFailure(accountID, apiKey string) {
+	if p.stats != nil {
+		p.stats.RecordFailure(accountID, apiKey)
+	}
+}
+
+// AccountStatsSnapshot returns per-account request statistics.
+func (p *Pool) AccountStatsSnapshot() []map[string]any {
+	if p.stats == nil {
+		return nil
+	}
+	return p.stats.AccountsSnapshot()
+}
+
+// APIKeyStatsSnapshot returns per-api-key request statistics.
+func (p *Pool) APIKeyStatsSnapshot() []map[string]any {
+	if p.stats == nil {
+		return nil
+	}
+	return p.stats.KeysSnapshot()
+}
+
+// ForgetAccountStats removes stats for the given account id (e.g. account deleted).
+func (p *Pool) ForgetAccountStats(accountID string) {
+	if p.stats != nil {
+		p.stats.removeAccount(accountID)
+	}
+}
+
+// ForgetAPIKeyStats removes stats for the given api key value (e.g. key deleted).
+func (p *Pool) ForgetAPIKeyStats(apiKey string) {
+	if p.stats != nil {
+		p.stats.removeKey(apiKey)
+	}
+}
+
+// ResetStats wipes all per-account / per-key counters.
+func (p *Pool) ResetStats() {
+	if p.stats != nil {
+		p.stats.resetAll()
+	}
 }

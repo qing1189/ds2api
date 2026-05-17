@@ -3,6 +3,7 @@ import { useAccountsData } from './useAccountsData'
 import { useAccountActions } from './useAccountActions'
 import QueueCards from './QueueCards'
 import WeightPanel from './WeightPanel'
+import StatsPanel from './StatsPanel'
 import ApiKeysPanel from './ApiKeysPanel'
 import AccountsTable from './AccountsTable'
 import AddKeyModal from './AddKeyModal'
@@ -16,6 +17,8 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
     const {
         queueStatus,
         weights,
+        accountStats,
+        apiKeyStats,
         keysExpanded,
         setKeysExpanded,
         accounts,
@@ -29,6 +32,7 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
         resolveAccountIdentifier,
         searchQuery,
         handleSearchChange,
+        resetStats,
     } = useAccountsData({ apiFetch })
 
     const {
@@ -111,6 +115,13 @@ export default function AccountManagerContainer({ config, onRefresh, onMessage, 
                 t={t}
                 onReenable={reenableAccount}
                 reenableLoading={reenableLoading}
+            />
+
+            <StatsPanel
+                accountStats={accountStats}
+                apiKeyStats={apiKeyStats}
+                t={t}
+                onReset={resetStats}
             />
 
             <ApiKeysPanel

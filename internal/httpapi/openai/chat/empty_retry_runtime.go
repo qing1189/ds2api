@@ -82,11 +82,11 @@ func (h *Handler) handleStreamWithRetry(w http.ResponseWriter, r *http.Request, 
 		CurrentInputFile: h.Store,
 	}, completionruntime.StreamRetryHooks{
 		ConsumeAttempt: func(currentResp *http.Response, allowDeferEmpty bool) (bool, bool) {
-			return h.consumeChatStreamAttempt(r, currentResp, streamRuntime, initialType, thinkingEnabled, historySession, allowDeferEmpty)
+			return h.consumeChatStreamAttempt(r, currentResp, streamRuntime, initialType, thinkingEnabled, historySession, a, allowDeferEmpty)
 		},
 		Finalize: func(attempts int) {
 			streamRuntime.finalize("stop", false)
-			recordChatStreamHistory(streamRuntime, historySession)
+			recordChatStreamHistory(streamRuntime, historySession, a)
 			config.Logger.Info("[openai_empty_retry] terminal empty output", "surface", "chat.completions", "stream", true, "retry_attempts", attempts, "success_source", "none")
 		},
 		ParentMessageID: func() int {
@@ -142,7 +142,7 @@ func (h *Handler) prepareChatStreamRuntime(w http.ResponseWriter, resp *http.Res
 	return streamRuntime, initialType, true
 }
 
-func (h *Handler) consumeChatStreamAttempt(r *http.Request, resp *http.Response, streamRuntime *chatStreamRuntime, initialType string, thinkingEnabled bool, historySession *chatHistorySession, allowDeferEmpty bool) (bool, bool) {
+func (h *Handler) consumeChatStreamAttempt(r *http.Request, resp *http.Response, streamRuntime *chatStreamRuntime, initialType string, thinkingEnabled bool, historySession *chatHistorySession, a *auth.RequestAuth, allowDeferEmpty bool) (bool, bool) {
 	defer func() { _ = resp.Body.Close() }()
 	finalReason := "stop"
 	streamengine.ConsumeSSE(streamengine.ConsumeConfig{
@@ -179,13 +179,20 @@ func (h *Handler) consumeChatStreamAttempt(r *http.Request, resp *http.Response,
 	}
 	terminalWritten := streamRuntime.finalize(finalReason, allowDeferEmpty && finalReason != "content_filter")
 	if terminalWritten {
-		recordChatStreamHistory(streamRuntime, historySession)
+		recordChatStreamHistory(streamRuntime, historySession, a)
 		return true, false
 	}
 	return false, true
 }
 
-func recordChatStreamHistory(streamRuntime *chatStreamRuntime, historySession *chatHistorySession) {
+func recordChatStreamHistory(streamRuntime *chatStreamRuntime, historySession *chatHistorySession, a *auth.RequestAuth) {
+	if streamRuntime != nil && streamRuntime.finalErrorMessage == "" {
+		// Record per-account / per-key stats for successful streams.
+		if a != nil {
+			a.MarkOutcome(true)
+			a.MarkUsageFromMap(streamRuntime.finalUsage)
+		}
+	}
 	if historySession == nil {
 		return
 	}

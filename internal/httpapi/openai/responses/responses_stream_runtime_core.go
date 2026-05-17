@@ -2,6 +2,7 @@ package responses
 
 import (
 	"ds2api/internal/assistantturn"
+	"ds2api/internal/auth"
 	"ds2api/internal/toolcall"
 	"net/http"
 	"strings"
@@ -63,6 +64,7 @@ type responsesStreamRuntime struct {
 
 	persistResponse func(obj map[string]any)
 	history         *responsehistory.Session
+	auth            *auth.RequestAuth
 }
 
 func newResponsesStreamRuntime(
@@ -229,6 +231,10 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 			outcome.FinishReason,
 			assistantturn.OpenAIResponsesUsage(turn),
 		)
+	}
+	if s.auth != nil {
+		s.auth.MarkOutcome(true)
+		s.auth.MarkUsage(turn.Usage.InputTokens, turn.Usage.OutputTokens)
 	}
 	s.sendEvent("response.completed", openaifmt.BuildResponsesCompletedPayload(obj))
 	s.sendDone()

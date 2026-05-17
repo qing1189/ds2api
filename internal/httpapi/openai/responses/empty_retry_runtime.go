@@ -20,6 +20,7 @@ func (h *Handler) handleResponsesStreamWithRetry(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	streamRuntime.auth = a
 	completionruntime.ExecuteStreamWithRetry(r.Context(), h.DS, a, resp, payload, pow, completionruntime.StreamRetryOptions{
 		Surface:          "responses",
 		Stream:           true,

@@ -59,7 +59,7 @@ func TestConsumeChatStreamAttemptMarksContextCancelledState(t *testing.T) {
 	)
 
 	h := &Handler{}
-	terminalWritten, retryable := h.consumeChatStreamAttempt(req, resp, streamRuntime, "text", false, session, true)
+	terminalWritten, retryable := h.consumeChatStreamAttempt(req, resp, streamRuntime, "text", false, session, nil, true)
 	if !terminalWritten || retryable {
 		t.Fatalf("expected cancelled attempt to terminate without retry, got terminalWritten=%v retryable=%v", terminalWritten, retryable)
 	}

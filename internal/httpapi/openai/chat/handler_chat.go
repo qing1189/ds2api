@@ -98,6 +98,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		a.MarkOutcome(true)
 		respBody := openaifmt.BuildChatCompletionWithToolCalls(result.SessionID, stdReq.ResponseModel, result.Turn.Prompt, result.Turn.Thinking, result.Turn.Text, result.Turn.ToolCalls, stdReq.ToolsRaw)
 		respBody["usage"] = assistantturn.OpenAIChatUsage(result.Turn)
+		a.MarkUsage(result.Turn.Usage.InputTokens, result.Turn.Usage.OutputTokens)
 		finishReason := assistantturn.FinalizeTurn(result.Turn, assistantturn.FinalizeOptions{}).FinishReason
 		if historySession != nil {
 			historySession.success(http.StatusOK, historyThinkingForArchive(result.Turn.RawThinking, result.Turn.DetectionThinking, result.Turn.Thinking), historyTextForArchive(result.Turn.RawText, result.Turn.Text), finishReason, assistantturn.OpenAIChatUsage(result.Turn))

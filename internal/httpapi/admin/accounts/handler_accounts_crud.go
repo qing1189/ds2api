@@ -171,6 +171,7 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"detail": err.Error()})
 		return
 	}
+	h.Pool.ForgetAccountStats(identifier)
 	h.Pool.Reset()
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "total_accounts": len(h.Store.Snapshot().Accounts)})
 }

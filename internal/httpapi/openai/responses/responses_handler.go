@@ -116,6 +116,7 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.MarkOutcome(true)
+		a.MarkUsage(result.Turn.Usage.InputTokens, result.Turn.Usage.OutputTokens)
 		if historySession != nil {
 			historySession.SuccessTurn(http.StatusOK, result.Turn, assistantturn.OpenAIResponsesUsage(result.Turn))
 		}
@@ -217,7 +218,6 @@ func (h *Handler) handleResponsesStream(w http.ResponseWriter, r *http.Request, 
 		nil,
 	)
 	streamRuntime.refFileTokens = refFileTokens
-	streamRuntime.sendCreated()
 
 	streamengine.ConsumeSSE(streamengine.ConsumeConfig{
 		Context:             r.Context(),

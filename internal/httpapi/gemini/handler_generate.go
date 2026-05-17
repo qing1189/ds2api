@@ -110,6 +110,8 @@ func (h *Handler) handleGeminiDirect(w http.ResponseWriter, r *http.Request, str
 	if historySession != nil {
 		historySession.SuccessTurn(http.StatusOK, result.Turn, responsehistory.GenericUsage(result.Turn))
 	}
+	a.MarkOutcome(true)
+	a.MarkUsage(result.Turn.Usage.InputTokens, result.Turn.Usage.OutputTokens)
 	writeJSON(w, http.StatusOK, buildGeminiGenerateContentResponseFromTurn(result.Turn))
 	return true
 }

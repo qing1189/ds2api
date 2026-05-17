@@ -190,6 +190,10 @@ func (s *claudeStreamRuntime) finalize(stopReason string, deferEmptyOutput bool)
 	if outcome.HasToolCalls {
 		stopReason = "tool_use"
 	}
+	if s.auth != nil {
+		s.auth.MarkOutcome(true)
+		s.auth.MarkUsage(turn.Usage.InputTokens, turn.Usage.OutputTokens)
+	}
 	if s.history != nil {
 		s.history.Success(
 			200,
