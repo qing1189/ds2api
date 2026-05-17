@@ -200,7 +200,16 @@
         "lastSuccess": "Last success",
         "weightDetailTitle": "Weight details",
         "currentWeight": "Current weight",
-        "successRate": "Success rate"
+        "successRate": "Success rate",
+        "weightTabAll": "All",
+        "weightTabHealthy": "Healthy",
+        "weightTabDegraded": "Degraded",
+        "weightTabDisabled": "Disabled",
+        "weightSearchPlaceholder": "Search account...",
+        "weightStatusLabel": "Status",
+        "weightEmptyHealthy": "No healthy accounts",
+        "weightEmptyDegraded": "No degraded accounts",
+        "weightEmptyDisabled": "No disabled accounts"
     },
     "proxyManager": {
         "title": "Proxy IPs",
