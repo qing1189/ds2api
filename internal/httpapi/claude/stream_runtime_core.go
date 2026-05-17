@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"ds2api/internal/auth"
 	"ds2api/internal/responsehistory"
 	"ds2api/internal/sse"
 	streamengine "ds2api/internal/stream"
@@ -49,6 +50,7 @@ type claudeStreamRuntime struct {
 	ended              bool
 	upstreamErr        string
 	history            *responsehistory.Session
+	auth               *auth.RequestAuth
 }
 
 func newClaudeStreamRuntime(

@@ -46,6 +46,12 @@ type PoolController interface {
 	ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMaxInflight int)
 	WeightStatus() []map[string]any
 	ReenableAccount(accountID string) bool
+	DisableAccount(accountID string) bool
+	AccountStatsSnapshot() []map[string]any
+	APIKeyStatsSnapshot() []map[string]any
+	ForgetAccountStats(accountID string)
+	ForgetAPIKeyStats(apiKey string)
+	ResetStats()
 }
 
 type OpenAIChatCaller interface {

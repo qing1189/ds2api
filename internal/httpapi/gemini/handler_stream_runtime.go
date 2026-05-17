@@ -86,6 +86,7 @@ type geminiStreamRuntime struct {
 	finalErrorMessage string
 	finalErrorCode    string
 	history           *responsehistory.Session
+	auth              *auth.RequestAuth
 }
 
 func (h *Handler) handleStreamGenerateContentWithRetry(w http.ResponseWriter, r *http.Request, a *auth.RequestAuth, resp *http.Response, payload map[string]any, pow string, stdReq promptcompat.StandardRequest, model, finalPrompt string, thinkingEnabled, searchEnabled bool, toolNames []string, toolsRaw any, historySession *responsehistory.Session) {
@@ -107,6 +108,7 @@ func (h *Handler) handleStreamGenerateContentWithRetry(w http.ResponseWriter, r 
 	rc := http.NewResponseController(w)
 	_, canFlush := w.(http.Flusher)
 	runtime := newGeminiStreamRuntime(w, rc, canFlush, model, finalPrompt, thinkingEnabled, searchEnabled, stripReferenceMarkersEnabled(), toolNames, toolsRaw, historySession)
+	runtime.auth = a
 
 	completionruntime.ExecuteStreamWithRetry(r.Context(), h.DS, a, resp, payload, pow, completionruntime.StreamRetryOptions{
 		Surface:          "gemini.generate_content",
@@ -341,6 +343,10 @@ func (s *geminiStreamRuntime) finalize(deferEmptyOutput bool) bool {
 			assistantturn.FinishReason(turn),
 			responsehistory.GenericUsage(turn),
 		)
+	}
+	if s.auth != nil {
+		s.auth.MarkOutcome(true)
+		s.auth.MarkUsage(turn.Usage.InputTokens, turn.Usage.OutputTokens)
 	}
 
 	if s.bufferContent {

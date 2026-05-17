@@ -27,6 +27,7 @@ type RequestAuth struct {
 	UseConfigToken bool
 	DeepSeekToken  string
 	CallerID       string
+	APIKey         string
 	AccountID      string
 	TargetAccount  string
 	Account        config.Account
@@ -35,6 +36,8 @@ type RequestAuth struct {
 
 	requestOutcomeSet bool
 	requestSuccess    bool
+	usageInputTokens  int
+	usageOutputTokens int
 }
 
 type LoginFunc func(ctx context.Context, acc config.Account) (string, error)
@@ -78,6 +81,7 @@ func (r *Resolver) Determine(req *http.Request) (*RequestAuth, error) {
 	if err != nil {
 		return nil, err
 	}
+	a.APIKey = callerKey
 	return a, nil
 }
 
@@ -233,8 +237,10 @@ func (r *Resolver) Release(a *RequestAuth) {
 	if a.requestOutcomeSet {
 		if a.requestSuccess {
 			r.ReportRequestSuccess(a.AccountID)
+			r.Pool.RecordRequestSuccess(a.AccountID, a.APIKey, a.usageInputTokens, a.usageOutputTokens)
 		} else {
 			r.ReportRequestFailure(a.AccountID)
+			r.Pool.RecordRequestFailure(a.AccountID, a.APIKey)
 		}
 	}
 	r.Pool.Release(a.AccountID)
@@ -279,6 +285,67 @@ func (a *RequestAuth) MarkOutcome(success bool) {
 	}
 	a.requestOutcomeSet = true
 	a.requestSuccess = success
+}
+
+// MarkUsage records the input/output token counts for the current request.
+// They will be aggregated into per-account / per-api-key stats when the request
+// is released with a successful outcome.
+func (a *RequestAuth) MarkUsage(inputTokens, outputTokens int) {
+	if a == nil {
+		return
+	}
+	if inputTokens > 0 {
+		a.usageInputTokens = inputTokens
+	}
+	if outputTokens > 0 {
+		a.usageOutputTokens = outputTokens
+	}
+}
+
+// MarkUsageFromMap accepts a usage map produced by the various format builders
+// and extracts input/output token counts using the conventional field names.
+// Missing or zero fields are ignored.
+//
+// Recognized field names (in priority order):
+//   - input_tokens / prompt_tokens / promptTokenCount  → input tokens
+//   - output_tokens / completion_tokens / candidatesTokenCount → output tokens
+func (a *RequestAuth) MarkUsageFromMap(usage map[string]any) {
+	if a == nil || len(usage) == 0 {
+		return
+	}
+	in := pickIntField(usage, "input_tokens", "prompt_tokens", "promptTokenCount")
+	out := pickIntField(usage, "output_tokens", "completion_tokens", "candidatesTokenCount")
+	a.MarkUsage(in, out)
+}
+
+func pickIntField(m map[string]any, keys ...string) int {
+	for _, k := range keys {
+		if raw, ok := m[k]; ok {
+			switch v := raw.(type) {
+			case int:
+				if v > 0 {
+					return v
+				}
+			case int32:
+				if v > 0 {
+					return int(v)
+				}
+			case int64:
+				if v > 0 {
+					return int(v)
+				}
+			case float32:
+				if v > 0 {
+					return int(v)
+				}
+			case float64:
+				if v > 0 {
+					return int(v)
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func extractCallerToken(req *http.Request) string {

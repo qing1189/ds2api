@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 export function useAccountsData({ apiFetch }) {
     const [queueStatus, setQueueStatus] = useState(null)
     const [weights, setWeights] = useState(null)
+    const [accountStats, setAccountStats] = useState(null)
+    const [apiKeyStats, setApiKeyStats] = useState(null)
     const [keysExpanded, setKeysExpanded] = useState(false)
 
     const [accounts, setAccounts] = useState([])
@@ -73,13 +75,41 @@ export function useAccountsData({ apiFetch }) {
         }
     }
 
+    const fetchStats = async () => {
+        try {
+            const [accRes, keyRes] = await Promise.all([
+                apiFetch('/admin/stats/accounts'),
+                apiFetch('/admin/stats/keys'),
+            ])
+            if (accRes.ok) setAccountStats(await accRes.json())
+            if (keyRes.ok) setApiKeyStats(await keyRes.json())
+        } catch (e) {
+            console.error('Failed to fetch stats:', e)
+        }
+    }
+
+    const resetStats = async () => {
+        try {
+            const res = await apiFetch('/admin/stats/reset', { method: 'POST' })
+            if (res.ok) {
+                await fetchStats()
+                return true
+            }
+        } catch (e) {
+            console.error('Failed to reset stats:', e)
+        }
+        return false
+    }
+
     useEffect(() => {
         fetchAccounts()
         fetchQueueStatus()
         fetchWeights()
+        fetchStats()
         const interval = setInterval(() => {
             fetchQueueStatus()
             fetchWeights()
+            fetchStats()
         }, 5000)
         return () => clearInterval(interval)
     }, [])
@@ -87,6 +117,8 @@ export function useAccountsData({ apiFetch }) {
     return {
         queueStatus,
         weights,
+        accountStats,
+        apiKeyStats,
         keysExpanded,
         setKeysExpanded,
         accounts,
@@ -100,5 +132,7 @@ export function useAccountsData({ apiFetch }) {
         resolveAccountIdentifier,
         searchQuery,
         handleSearchChange,
+        fetchStats,
+        resetStats,
     }
 }
