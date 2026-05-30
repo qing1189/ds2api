@@ -451,7 +451,6 @@ Parameters: ...
 如果外部接口行为也变了，还应同步检查：
 
 - [API.md](../API.md)
-- [API.en.md](../API.en.md)
 - [docs/toolcall-semantics.md](./toolcall-semantics.md)
 
 原则是：

@@ -1,7 +1,5 @@
 # 贡献指南
 
-语言 / Language: [中文](CONTRIBUTING.md) | [English](CONTRIBUTING.en.md)
-
 感谢你对 DS2API 的关注与贡献！
 
 ## 开发环境设置

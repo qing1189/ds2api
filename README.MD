@@ -15,8 +15,6 @@
 [![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/L4CFHP)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/CJackHwang/ds2api)
 
-语言 / Language: [中文](README.MD) | [English](README.en.md)
-
 将 DeepSeek Web 对话能力转换为 OpenAI、Claude 与 Gemini 兼容 API。核心后端以 **Go** 实现，Vercel 流式桥接额外使用少量 Node Runtime，前端为 React WebUI 管理台（源码在 `webui/`，部署时自动构建到 `static/admin`）。
 
 文档入口：[文档导航](docs/README.md) / [架构说明](docs/ARCHITECTURE.md) / [接口文档](API.md)
@@ -58,6 +56,8 @@
 - [配置说明](#配置说明)
 - [鉴权模式](#鉴权模式)
 - [并发模型](#并发模型)
+- [智能权重轮询与账号统计](#智能权重轮询与账号统计)
+- [防风控策略](#防风控策略)
 - [Tool Call 适配](#tool-call-适配)
 - [本地开发抓包工具](#本地开发抓包工具)
 - [文档索引](#文档索引)
@@ -89,11 +89,13 @@ flowchart LR
             Completion["Completion Runtime\n(Session / PoW / Completion)"]
             Turn["AssistantTurn\n(输出语义归一)"]
             Auth["Auth Resolver\n(API key / bearer / x-goog-api-key)"]
-            Pool["Account Pool + Queue\n(并发槽位 + 等待队列)"]
+            Pool["Account Pool + Queue\n(权重轮询 + 并发槽位 + 等待队列)"]
             DSClient["DeepSeek Client\n(Session / Auth / Completion / Files)"]
             Pow["PoW 实现\n(纯 Go)"]
             Tool["Tool Sieve\n(Go/Node 语义对齐)"]
             History["Current Input File\n(DS2API_HISTORY.txt)"]
+            Risk["Anti-Risk\n(账号粘性指纹 / uTLS / log-uniform 抖动)"]
+            Stats["请求统计\n(账号 / API Key + token 计数)"]
         end
     end
 
@@ -111,10 +113,12 @@ flowchart LR
     Vercel -.Go prepare.-> Completion
     Vercel -.Node SSE.-> Tool
     Completion --> Auth
-    Completion -.账号轮询.-> Pool
+    Completion -.权重轮询.-> Pool
     Completion -.工具调用解析.-> Tool
     Completion -.PoW 计算.-> Pow
+    Pool -.请求计数.-> Stats
     Auth --> DSClient
+    DSClient -.设备指纹/抖动.-> Risk
     DSClient --> Upstream
     Upstream --> DSClient
     Turn --> Client
@@ -137,11 +141,14 @@ flowchart LR
 | Ollama 兼容 | `GET /api/version`、`GET /api/tags`、`POST /api/show` |
 | 统一 CORS 兼容 | `/v1/*`、`/anthropic/*`、`/v1beta/models/*`、`/api/*`、`/admin/*` 统一走同一套 CORS 策略；Vercel 上 `/v1/chat/completions` 的 Node Runtime 也对齐相同放行规则，尽量减少第三方预检请求头限制 |
 | 多账号轮询 | 自动 token 刷新、邮箱/手机号双登录方式 |
+| 智能权重轮询 | 每账号动态权重：失败降权、连续成功 / 限时宽限自动恢复、权重归零自动禁用，并支持管理员手动禁用/启用 |
 | 并发队列控制 | 每账号 in-flight 上限 + 等待队列，动态计算建议并发值 |
+| 防风控增强 | 账号粘性设备指纹（UA / locale / x-device-id 同账号恒定，trace-id 每请求换）、uTLS Safari 握手、log-uniform 请求抖动、会话复用，详见 [docs/anti-risk-control.md](docs/anti-risk-control.md) |
+| 请求统计 | 按账号 / API Key 统计请求总数、成功/失败次数与输入/输出 token，可在 WebUI 查看并随时重置 |
 | DeepSeek PoW | 纯 Go 高性能实现（DeepSeekHashV1），毫秒级响应 |
 | Tool Calling | 防泄漏处理：非代码块高置信特征识别、`delta.tool_calls` 早发、结构化增量输出 |
-| Admin API | 配置管理、运行时设置热更新、代理管理、账号测试 / 批量测试、会话清理、导入导出、Vercel 同步、版本检查 |
-| WebUI 管理台 | `/admin` 单页应用（中英文双语、深色模式，支持查看服务器端对话记录） |
+| Admin API | 配置管理、运行时设置热更新、代理管理、账号测试 / 批量测试、权重与统计查询、指纹轮换、会话清理、导入导出、Vercel 同步、版本检查 |
+| WebUI 管理台 | `/admin` 单页应用（中英文双语、深色模式，含权重面板、统计面板，支持查看服务器端对话记录） |
 | 运维探针 | `GET /healthz`（存活）、`GET /readyz`（就绪） |
 
 OpenAI `/v1/*` 仍是推荐的规范路径；同时支持 `/models`、`/chat/completions`、`/responses`、`/embeddings`、`/files`、`/files/{file_id}` 等根路径快捷路由，方便只配置 DS2API 根地址的第三方客户端。
@@ -337,6 +344,7 @@ go run ./cmd/ds2api
 - `current_input_file`：全局生效的上下文拆分上传策略；默认开启且阈值为 `0`，触发时将完整上下文合并上传为 `DS2API_HISTORY.txt` 上下文文件。
 - 如果关闭 `current_input_file`，请求会直接透传，不上传拆分上下文文件。
 - `thinking_injection`：默认开启；在最新 user 消息末尾追加思考增强提示词，提高高强度推理与工具调用前的思考稳定性；`prompt` 留空时使用内置默认提示词。
+- 防风控相关：`DS2API_FINGERPRINT_SALT`（账号指纹盐）、`DS2API_REQUEST_JITTER_MIN_MS` / `DS2API_REQUEST_JITTER_MAX_MS`（请求抖动范围）、`DS2API_SESSION_CACHE_TTL_MINUTES`（会话复用窗口），详见「[防风控策略](#防风控策略)」与 [docs/anti-risk-control.md](docs/anti-risk-control.md)。
 
 环境变量完整列表见 [部署指南](docs/DEPLOY.md)，接口鉴权规则见 [API.md](API.md#鉴权规则)。
 
@@ -367,6 +375,63 @@ Gemini 路由还可以使用 `x-goog-api-key`，或在没有认证头时使用 `
 - 超出总承载上限后才返回 `429 Too Many Requests`，当前响应不附带 `Retry-After`
 - completion 空输出类 429 会先做同账号补偿重试；托管账号模式还会在最终返回 429 前切到另一个可用账号 fresh retry 一次
 - `GET /admin/queue/status` 返回实时并发状态
+
+## 智能权重轮询与账号统计
+
+在多账号场景下，DS2API 不再简单顺序轮询，而是为每个托管账号维护一份运行时**权重**，让流量自动向健康账号倾斜，并把被风控/报错的账号逐步「冷却」。
+
+### 权重轮询规则
+
+| 行为 | 说明 |
+| --- | --- |
+| 初始权重 | 每个账号 `100`（满血） |
+| 失败降权 | 每次失败 `-20`（`maxWeight × 0.2`） |
+| 连续成功恢复 | 连续 `5` 次成功后权重一次性回满 `100` |
+| 限时宽限恢复 | 距上次失败满 `30` 分钟后自动恢复满血 |
+| 自动禁用 | 权重降到 `0` 自动禁用（`disable_reason=auto`） |
+| 手动禁用/启用 | 管理员可手动禁用或重新启用账号（`disable_reason=manual`，不会自动恢复） |
+| 选号策略 | 候选账号权重相同 → 取队首（保持轮询顺序）；权重不同 → 按权重做加权随机，高权重账号被选中概率更高 |
+
+后台每分钟检查一次限时恢复；被禁用的账号不参与选号，直到权重恢复或被手动重新启用。
+
+### 账号 / API Key 请求统计
+
+服务在内存中维护按账号、按 API Key 的请求计数：请求总数、成功/失败次数、输入/输出 token 累计，以及最近一次成功/失败/请求时间。统计可随时清零；API Key 统计只返回掩码预览（`key_preview`），不会回传明文。
+
+### 相关 Admin 接口（需 Admin JWT）
+
+| 方法 / 路径 | 说明 |
+| --- | --- |
+| `GET /admin/queue/weights` | 查看所有账号的权重与禁用状态（含统计字段） |
+| `POST /admin/queue/disable/{identifier}` | 手动禁用指定账号（email 或 mobile） |
+| `POST /admin/queue/reenable/{identifier}` | 重新启用并恢复满血权重 |
+| `POST /admin/queue/rotate-fingerprints` | 清空全部账号指纹缓存，下次请求重新生成（见「防风控策略」） |
+| `GET /admin/stats/accounts` | 按账号查看请求 / token 统计 |
+| `GET /admin/stats/keys` | 按 API Key 查看请求 / token 统计（掩码） |
+| `POST /admin/stats/reset` | 清空全部内存统计 |
+
+WebUI 管理台「账号」页提供**权重面板（WeightPanel）**与**统计面板（StatsPanel）**：权重面板按状态分类（全部 / 正常 / 降权 / 禁用）、支持账号搜索与行折叠详情，并可一键禁用/启用或轮换指纹。
+
+## 防风控策略
+
+DS2API 在请求形态上做了多项处理，目标是让发往 DeepSeek 上游的请求更接近「一群普通 Android 客户端」，而不是「一台机器在并发刷接口」。完整说明见 [docs/anti-risk-control.md](docs/anti-risk-control.md)。
+
+| 措施 | 说明 |
+| --- | --- |
+| 账号粘性指纹 | 每账号由 `sha256(salt + accountID)` 派生一套**稳定的设备身份**：`User-Agent`、平台/版本、`x-app-build`、`x-os-version`(Android API level)、`locale`、`Accept-Language`、`x-device-id` 同账号恒定；`x-trace-id` 每请求重新生成。不同账号即不同「设备」 |
+| uTLS 指纹 | 强制 `utls.HelloSafari_Auto` 握手并把 ALPN 锁到 `http/1.1`，避免暴露 Go 默认 ClientHello |
+| log-uniform 抖动 | login / create_session / get_pow / completion 各步加入对数均匀分布抖动，默认 `80–350ms`（约一半落在 80–180ms），右偏更像真人 |
+| 清理可疑请求头 | 移除现代 Android OkHttp 基本不发的 `accept-charset`，改用 `Accept-Encoding: gzip, deflate, br` |
+| 会话复用 | 同账号在 TTL 窗口内复用同一个 `chat_session_id`，不每条消息都重开会话 |
+| 多渠道出口 | 支持每账号绑定不同 SOCKS5 代理，配合粘性指纹等价于「一账号一设备一 IP」 |
+
+可调环境变量（详见 `.env.example`）：
+
+- `DS2API_FINGERPRINT_SALT`：派生指纹用的固定盐。留空则每次进程启动随机生成（重启即「全员换设备」）；设为固定字符串可在重启后保持身份稳定。
+- `DS2API_REQUEST_JITTER_MIN_MS` / `DS2API_REQUEST_JITTER_MAX_MS`：抖动范围（毫秒），同时设为 `0` 可关闭抖动。
+- `DS2API_SESSION_CACHE_TTL_MINUTES`：会话复用窗口（分钟），默认 `10`，设为 `0` 关闭。
+
+> 怀疑被风控时，可先调用 `POST /admin/queue/rotate-fingerprints` 让全员「换一台手机」再观察。强烈建议为不同账号配置不同代理，否则同 IP 下数十个不同 device id 反而是异常信号。
 
 ## Tool Call 适配
 
@@ -418,9 +483,11 @@ go run ./cmd/ds2api
 
 | 文档 | 说明 |
 | --- | --- |
-| [API.md](API.md) / [API.en.md](API.en.md) | API 接口文档（含请求/响应示例） |
-| [DEPLOY.md](docs/DEPLOY.md) / [DEPLOY.en.md](docs/DEPLOY.en.md) | 部署指南（本地/Docker/Vercel/systemd） |
-| [CONTRIBUTING.md](docs/CONTRIBUTING.md) / [CONTRIBUTING.en.md](docs/CONTRIBUTING.en.md) | 贡献指南 |
+| [API.md](API.md) | API 接口文档（含请求/响应示例） |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构与目录结构说明 |
+| [anti-risk-control.md](docs/anti-risk-control.md) | 防风控策略说明（指纹 / 抖动 / 会话复用） |
+| [DEPLOY.md](docs/DEPLOY.md) | 部署指南（本地/Docker/Vercel/systemd） |
+| [CONTRIBUTING.md](docs/CONTRIBUTING.md) | 贡献指南 |
 | [TESTING.md](docs/TESTING.md) | 测试集使用指南 |
 
 ## 测试
@@ -447,7 +514,7 @@ npm run build --prefix webui
 - **触发条件**：默认仅在 GitHub Release `published` 时自动触发；也支持在 Actions 页面手动 `workflow_dispatch`，并填写 `release_tag` 复跑/补发
 - **构建产物**：多平台二进制包（`linux/amd64`、`linux/arm64`、`linux/armv7`、`darwin/amd64`、`darwin/arm64`、`windows/amd64`、`windows/arm64`）、Linux Docker 镜像导出包 + `sha256sums.txt`
 - **容器镜像发布**：仅推送到 GHCR（`ghcr.io/cjackhwang/ds2api`）
-- **每个二进制压缩包包含**：`ds2api` 可执行文件、`static/admin`、`config.example.json`、`.env.example`、`README.MD`、`README.en.md`、`LICENSE`
+- **每个二进制压缩包包含**：`ds2api` 可执行文件、`static/admin`、`config.example.json`、`.env.example`、`README.MD`、`LICENSE`
 
 ## 免责声明
 
