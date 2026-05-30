@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"ds2api/internal/prompt"
-	"ds2api/internal/toolcall"
 )
 
 const assistantReasoningLabel = "reasoning_content"
@@ -62,19 +61,15 @@ func buildAssistantContentForPrompt(msg map[string]any) string {
 	if reasoning == "" {
 		reasoning = strings.TrimSpace(extractOpenAIReasoningContentFromMessage(msg["content"]))
 	}
-	toolHistory := prompt.FormatToolCallsForPrompt(msg["tool_calls"])
-	if toolHistory == "" {
-		content = normalizeAssistantToolMarkupContentForPrompt(content)
-	}
-	parts := make([]string, 0, 3)
+	// Tool calling has been removed: assistant tool_calls history is no longer
+	// serialized into the prompt (no DSML). Only reasoning + visible content
+	// are carried forward so the request looks like a normal conversation.
+	parts := make([]string, 0, 2)
 	if reasoning != "" {
 		parts = append(parts, formatPromptLabeledBlock(assistantReasoningLabel, reasoning))
 	}
 	if content != "" {
 		parts = append(parts, content)
-	}
-	if toolHistory != "" {
-		parts = append(parts, toolHistory)
 	}
 	switch len(parts) {
 	case 0:
@@ -84,40 +79,6 @@ func buildAssistantContentForPrompt(msg map[string]any) string {
 	default:
 		return strings.Join(parts, "\n\n")
 	}
-}
-
-func normalizeAssistantToolMarkupContentForPrompt(content string) string {
-	trimmed := strings.TrimSpace(content)
-	if trimmed == "" || !isStandaloneAssistantToolMarkupBlock(trimmed) {
-		return content
-	}
-	parsed := toolcall.ParseStandaloneToolCallsDetailed(trimmed, nil)
-	if len(parsed.Calls) == 0 {
-		return content
-	}
-	raw := make([]any, 0, len(parsed.Calls))
-	for _, call := range parsed.Calls {
-		raw = append(raw, map[string]any{
-			"name":  call.Name,
-			"input": call.Input,
-		})
-	}
-	if formatted := prompt.FormatToolCallsForPrompt(raw); formatted != "" {
-		return formatted
-	}
-	return content
-}
-
-func isStandaloneAssistantToolMarkupBlock(trimmed string) bool {
-	tag, ok := toolcall.FindToolMarkupTagOutsideIgnored(trimmed, 0)
-	if !ok || tag.Start != 0 || tag.Closing || tag.Name != "tool_calls" {
-		return false
-	}
-	closeTag, ok := toolcall.FindMatchingToolMarkupClose(trimmed, tag)
-	if !ok {
-		return false
-	}
-	return strings.TrimSpace(trimmed[closeTag.End+1:]) == ""
 }
 
 func normalizeOpenAIReasoningContentForPrompt(v any) string {

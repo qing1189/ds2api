@@ -205,57 +205,6 @@ func TestGeminiDirectAppliesCurrentInputFile(t *testing.T) {
 	}
 }
 
-func TestGeminiCurrentInputFileUploadsToolsSeparately(t *testing.T) {
-	ds := &testGeminiDS{
-		resp: makeGeminiUpstreamResponse(`data: {"p":"response/content","v":"ok"}`),
-	}
-	h := &Handler{
-		Store: testGeminiConfig{},
-		Auth:  testGeminiAuth{},
-		DS:    ds,
-	}
-	reqBody := `{
-		"contents":[{"role":"user","parts":[{"text":"run code"}]}],
-		"tools":[{"functionDeclarations":[{"name":"eval_javascript","description":"eval","parameters":{"type":"object","properties":{"code":{"type":"string"}}}}]}]
-	}`
-	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent", strings.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	r := chi.NewRouter()
-	RegisterRoutes(r, h)
-
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	if len(ds.uploadCalls) != 2 {
-		t.Fatalf("expected history and tools uploads, got %d", len(ds.uploadCalls))
-	}
-	if ds.uploadCalls[0].Filename != "DS2API_HISTORY.txt" || ds.uploadCalls[1].Filename != "DS2API_TOOLS.txt" {
-		t.Fatalf("unexpected upload filenames: %#v", ds.uploadCalls)
-	}
-	historyText := string(ds.uploadCalls[0].Data)
-	if strings.Contains(historyText, "Description: eval") {
-		t.Fatalf("history transcript should not embed tool descriptions, got %q", historyText)
-	}
-	toolsText := string(ds.uploadCalls[1].Data)
-	if !strings.Contains(toolsText, "# DS2API_TOOLS.txt") || !strings.Contains(toolsText, "Tool: eval_javascript") || !strings.Contains(toolsText, "Description: eval") {
-		t.Fatalf("expected tools transcript to include Gemini tool schema, got %q", toolsText)
-	}
-	refIDs, _ := ds.payloads[0]["ref_file_ids"].([]any)
-	if len(refIDs) < 2 || refIDs[0] != "file-gemini-history" || refIDs[1] != "file-gemini-tools" {
-		t.Fatalf("expected history and tools ref ids first, got %#v", ds.payloads[0]["ref_file_ids"])
-	}
-	prompt, _ := ds.payloads[0]["prompt"].(string)
-	if !strings.Contains(prompt, "DS2API_TOOLS.txt") || !strings.Contains(prompt, "TOOL CALL FORMAT") {
-		t.Fatalf("expected live prompt to reference tools file and retain format instructions, got %q", prompt)
-	}
-	if strings.Contains(prompt, "Description: eval") {
-		t.Fatalf("live prompt should not inline tool descriptions, got %q", prompt)
-	}
-}
-
 func TestGeminiRoutesRegistered(t *testing.T) {
 	h := &Handler{
 		Store: testGeminiConfig{},

@@ -44,7 +44,6 @@ gofmt -w <changed-go-files>
 | OpenAI Chat / Responses | `internal/httpapi/openai/chat`、`internal/httpapi/openai/responses` |
 | Claude / Gemini 兼容入口 | `internal/httpapi/claude`、`internal/httpapi/gemini` |
 | API 请求归一到网页纯文本上下文 | `internal/promptcompat`、`docs/prompt-compatibility.md` |
-| 工具调用解析与流式防泄漏 | `internal/toolcall`、`internal/toolstream`、`docs/toolcall-semantics.md` |
 | DeepSeek 上游调用、登录、PoW、代理 | `internal/deepseek/client`、`internal/deepseek/transport` |
 | 账号池、并发槽位、等待队列 | `internal/account` |
 | Admin API | `internal/httpapi/admin` |
@@ -55,7 +54,6 @@ gofmt -w <changed-go-files>
 
 - 改接口行为时，同时检查 `API.md` 是否需要同步。
 - 改 prompt 兼容链路时，必须同步 `docs/prompt-compatibility.md`。
-- 改 tool call 语义时，同时检查 Go、Node sieve 和 `docs/toolcall-semantics.md`。
 - 改 WebUI 配置项时，同时检查 `webui/src/features/settings`、语言包和 `config.example.json`。
 - 拆分大文件时，保持对外函数签名稳定，并跑 `./tests/scripts/check-refactor-line-gate.sh`。
 
@@ -67,22 +65,15 @@ gofmt -w <changed-go-files>
 2. 鉴权与账号选择：`internal/auth`、`internal/account`。
 3. 请求归一化：`internal/promptcompat` 或协议转换包。
 4. 上游请求：`internal/deepseek/client`。
-5. 流式输出：`internal/stream`、`internal/sse`、`internal/toolstream`。
+5. 流式输出：`internal/stream`、`internal/sse`。
 6. 响应格式：主路径看 `internal/assistantturn` 与 `internal/format/*`；`internal/translatorcliproxy` 只用于 Vercel/fallback/test 桥接。
 
 对话记录页面问题优先检查：
 
 - Admin API：`/admin/chat-history`、`/admin/chat-history/{id}`。
 - 后端存储：`internal/chathistory/store.go`。
-- 输出归档：`internal/responsehistory` 在协议回译/裁剪前记录 DeepSeek 上游 assistant text / thinking；即使工具调用已被对外响应转成结构化 `tool_calls` 并从可见正文剔除，后台历史仍应保留原始 DSML / XML 片段，方便排查格式漂移。
+- 输出归档：`internal/responsehistory` 在协议回译/裁剪前记录 DeepSeek 上游 assistant text / thinking。
 - 前端轮询和 ETag：`webui/src/features/chatHistory/ChatHistoryContainer.jsx`。
-
-Tool call 问题优先跑：
-
-```bash
-go test -v ./internal/toolcall ./internal/toolstream -count=1
-./tests/scripts/run-unit-node.sh
-```
 
 ## 5. 测试选择
 

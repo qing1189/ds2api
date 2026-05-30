@@ -1,6 +1,6 @@
 # DS2API 项目价值说明
 
-文档导航：[总览](../README.MD) / [文档索引](./README.md) / [接口文档](../API.md) / [兼容主链路](./prompt-compatibility.md) / [Tool Calling 语义](./toolcall-semantics.md)
+文档导航：[总览](../README.MD) / [文档索引](./README.md) / [接口文档](../API.md) / [兼容主链路](./prompt-compatibility.md)
 
 > 本文用于说明 DS2API 的项目定位与长期价值。
 > 它不是架构说明，也不是功能清单，而是从“网页能力如何稳定 API 化”这个角度解释本项目为什么成立。
@@ -63,19 +63,11 @@ DS2API 通过 `promptcompat`、`completionruntime`、`assistantturn` 和各协�
 
 DS2API 不直接定义这些外部工具链，但它提供了一个足够稳定的 API 底座，让这些工具链可以外挂在上面继续工作。
 
-## 3. 工具调用的价值
+## 3. 工具调用的价值（已移除）
 
-工具调用不是 DS2API 成立的前提，但它是项目很重要的增强能力。
+> 工具调用 / Function Calling 适配已整体移除：DeepSeek 网页端会检测注入到 prompt 中的 DSML 工具标记并触发风控封号，因此为了让请求更接近真实人类对话、规避封号，项目不再注入任何工具说明，也不再解析模型输出中的工具调用。
 
-即使没有工具调用，DS2API 仍然是网页转 API 兼容层；当请求包含工具能力时，项目会额外处理模型输出漂移、长参数和流式防泄漏等问题：
-
-- 长脚本用 CDATA 保住原文
-- 文件路径和命令参数不容易被转义打坏
-- tool call 语法有统一的 DSML / canonical XML 处理
-- 模型输出漂了也能宽匹配、自修正
-- 流式场景能尽量不把工具块漏回普通文本
-
-这使 DS2API 可以服务编程工具和 agent 类客户端，但项目主轴仍然是“网页能力 API 化”，不是把工具调用当作项目唯一卖点。
+DS2API 的主轴始终是“网页能力 API 化”——把 DeepSeek 网页对话能力包装成 OpenAI / Claude / Gemini 兼容的**纯对话** API。客户端传入的 `tools` 等字段会被接受但忽略；如需工具 / Agent 能力，请在客户端侧自行实现（解析模型文本并执行）。
 
 ## 4. CDATA 的作用
 

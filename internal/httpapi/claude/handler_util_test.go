@@ -61,7 +61,7 @@ func TestNormalizeClaudeMessagesToolResult(t *testing.T) {
 	}
 }
 
-func TestNormalizeClaudeMessagesToolUseToAssistantToolCalls(t *testing.T) {
+func TestNormalizeClaudeMessagesToolUseToAssistantPlainText(t *testing.T) {
 	msgs := []any{
 		map[string]any{
 			"role": "assistant",
@@ -84,20 +84,16 @@ func TestNormalizeClaudeMessagesToolUseToAssistantToolCalls(t *testing.T) {
 	if m["role"] != "assistant" {
 		t.Fatalf("expected assistant role, got %#v", m["role"])
 	}
-	tc, _ := m["tool_calls"].([]any)
-	if len(tc) != 1 {
-		t.Fatalf("expected one tool call, got %#v", m["tool_calls"])
-	}
-	call, _ := tc[0].(map[string]any)
-	if call["id"] != "call_1" {
-		t.Fatalf("expected call id preserved, got %#v", call)
+	// Tool calling removed: no structured tool_calls field, no DSML markup.
+	if _, ok := m["tool_calls"]; ok {
+		t.Fatalf("expected no tool_calls field after tool-call removal, got %#v", m["tool_calls"])
 	}
 	content, _ := m["content"].(string)
-	if !containsStr(content, "<|DSML|tool_calls>") || !containsStr(content, `<|DSML|invoke name="search_web">`) {
-		t.Fatalf("expected assistant content to include DSML tool call history, got %q", content)
+	if containsStr(content, "DSML") {
+		t.Fatalf("expected no DSML markup in assistant content, got %q", content)
 	}
-	if !containsStr(content, `<|DSML|parameter name="query"><![CDATA[latest]]></|DSML|parameter>`) {
-		t.Fatalf("expected assistant content to include serialized parameters, got %q", content)
+	if !containsStr(content, "search_web") || !containsStr(content, "latest") {
+		t.Fatalf("expected tool call rendered as plain history text, got %q", content)
 	}
 }
 
@@ -125,16 +121,15 @@ func TestNormalizeClaudeMessagesPreservesThinkingOnToolUseHistory(t *testing.T) 
 	if m["reasoning_content"] != "need live search before answering" {
 		t.Fatalf("expected thinking preserved as reasoning_content, got %#v", m)
 	}
-	tc, _ := m["tool_calls"].([]any)
-	if len(tc) != 1 {
-		t.Fatalf("expected one tool call, got %#v", m["tool_calls"])
-	}
 	prompt := buildClaudePromptTokenText(got, true)
 	if !containsStr(prompt, "[reasoning_content]\nneed live search before answering\n[/reasoning_content]") {
 		t.Fatalf("expected thinking in prompt history, got %q", prompt)
 	}
-	if !containsStr(prompt, `<|DSML|invoke name="search_web">`) {
-		t.Fatalf("expected tool call in prompt history, got %q", prompt)
+	if containsStr(prompt, "DSML") {
+		t.Fatalf("expected no DSML markup in prompt history, got %q", prompt)
+	}
+	if !containsStr(prompt, "search_web") {
+		t.Fatalf("expected tool name in prompt history, got %q", prompt)
 	}
 }
 
@@ -291,97 +286,13 @@ func TestNormalizeClaudeMessagesBackfillsToolResultCallIDByName(t *testing.T) {
 		t.Fatalf("expected 2 messages, got %#v", got)
 	}
 	assistant, _ := got[0].(map[string]any)
-	tc, _ := assistant["tool_calls"].([]any)
-	call, _ := tc[0].(map[string]any)
-	callID, _ := call["id"].(string)
-	if !strings.HasPrefix(callID, "call_claude_") {
-		t.Fatalf("expected generated call id, got %#v", call)
+	if _, ok := assistant["tool_calls"]; ok {
+		t.Fatalf("expected no tool_calls field after tool-call removal, got %#v", assistant["tool_calls"])
 	}
 	toolMsg, _ := got[1].(map[string]any)
-	if toolMsg["tool_call_id"] != callID {
-		t.Fatalf("expected tool_result to reuse generated id, got %#v", toolMsg)
-	}
-}
-
-// ─── buildClaudeToolPrompt ───────────────────────────────────────────
-
-func TestBuildClaudeToolPromptSingleTool(t *testing.T) {
-	tools := []any{
-		map[string]any{
-			"name":        "search",
-			"description": "Search the web",
-			"input_schema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"query": map[string]any{"type": "string"},
-				},
-			},
-		},
-	}
-	prompt := buildClaudeToolPrompt(tools)
-	if prompt == "" {
-		t.Fatal("expected non-empty prompt")
-	}
-	// Should contain tool name and description
-	if !containsStr(prompt, "search") {
-		t.Fatalf("expected 'search' in prompt")
-	}
-	if !containsStr(prompt, "Search the web") {
-		t.Fatalf("expected description in prompt")
-	}
-	if !containsStr(prompt, "<|DSML|tool_calls>") {
-		t.Fatalf("expected DSML tool_calls format in prompt")
-	}
-	if !containsStr(prompt, "TOOL CALL FORMAT") {
-		t.Fatalf("expected tool call format header in prompt")
-	}
-}
-
-func TestBuildClaudeToolPromptMultipleTools(t *testing.T) {
-	tools := []any{
-		map[string]any{"name": "tool1", "description": "desc1"},
-		map[string]any{"name": "tool2", "description": "desc2"},
-	}
-	prompt := buildClaudeToolPrompt(tools)
-	if !containsStr(prompt, "tool1") || !containsStr(prompt, "tool2") {
-		t.Fatalf("expected both tools in prompt")
-	}
-}
-
-func TestBuildClaudeToolPromptSupportsOpenAIStyleFunctionTool(t *testing.T) {
-	tools := []any{
-		map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name":        "search",
-				"description": "Search via function tool",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"q": map[string]any{"type": "string"},
-					},
-				},
-			},
-		},
-	}
-	prompt := buildClaudeToolPrompt(tools)
-	if !containsStr(prompt, "Tool: search") {
-		t.Fatalf("expected OpenAI-style function tool name in prompt, got: %q", prompt)
-	}
-	if !containsStr(prompt, "Search via function tool") {
-		t.Fatalf("expected OpenAI-style function tool description in prompt, got: %q", prompt)
-	}
-	if !containsStr(prompt, "\"q\"") {
-		t.Fatalf("expected parameters schema serialized in prompt, got: %q", prompt)
-	}
-}
-
-func TestBuildClaudeToolPromptSkipsNonMap(t *testing.T) {
-	tools := []any{"not a map"}
-	prompt := buildClaudeToolPrompt(tools)
-	// No valid tools → empty prompt
-	if prompt != "" {
-		t.Fatalf("expected empty prompt for non-map tools, got: %q", prompt)
+	toolCallID, _ := toolMsg["tool_call_id"].(string)
+	if !strings.HasPrefix(toolCallID, "call_claude_") {
+		t.Fatalf("expected tool_result to reuse generated call id, got %#v", toolMsg)
 	}
 }
 
@@ -417,70 +328,6 @@ func TestHasSystemMessageNonMap(t *testing.T) {
 	msgs := []any{"not a map"}
 	if hasSystemMessage(msgs) {
 		t.Fatal("expected false for non-map")
-	}
-}
-
-// ─── extractClaudeToolNames ──────────────────────────────────────────
-
-func TestExtractClaudeToolNamesSingle(t *testing.T) {
-	tools := []any{
-		map[string]any{"name": "search"},
-	}
-	names := extractClaudeToolNames(tools)
-	if len(names) != 1 || names[0] != "search" {
-		t.Fatalf("expected [search], got %v", names)
-	}
-}
-
-func TestExtractClaudeToolNamesMultiple(t *testing.T) {
-	tools := []any{
-		map[string]any{"name": "search"},
-		map[string]any{"name": "calculate"},
-	}
-	names := extractClaudeToolNames(tools)
-	if len(names) != 2 {
-		t.Fatalf("expected 2 names, got %v", names)
-	}
-}
-
-func TestExtractClaudeToolNamesSkipsEmptyName(t *testing.T) {
-	tools := []any{
-		map[string]any{"name": ""},
-		map[string]any{"name": "valid"},
-	}
-	names := extractClaudeToolNames(tools)
-	if len(names) != 1 || names[0] != "valid" {
-		t.Fatalf("expected [valid], got %v", names)
-	}
-}
-
-func TestExtractClaudeToolNamesSkipsNonMap(t *testing.T) {
-	tools := []any{"not a map", 42}
-	names := extractClaudeToolNames(tools)
-	if len(names) != 0 {
-		t.Fatalf("expected 0, got %v", names)
-	}
-}
-
-func TestExtractClaudeToolNamesNil(t *testing.T) {
-	names := extractClaudeToolNames(nil)
-	if len(names) != 0 {
-		t.Fatalf("expected 0, got %v", names)
-	}
-}
-
-func TestExtractClaudeToolNamesSupportsOpenAIStyleFunctionTool(t *testing.T) {
-	tools := []any{
-		map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name": "search",
-			},
-		},
-	}
-	names := extractClaudeToolNames(tools)
-	if len(names) != 1 || names[0] != "search" {
-		t.Fatalf("expected [search], got %v", names)
 	}
 }
 

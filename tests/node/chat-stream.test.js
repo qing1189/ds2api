@@ -346,7 +346,7 @@ test('vercel stream exhausts DeepSeek continue before synthetic retry', async ()
   assert.equal(fetchBodies.some((body) => String(body.prompt || '').includes('Previous reply had no visible output')), false);
 });
 
-test('vercel stream continues direct quasi_status incomplete before final tool call', async () => {
+test('vercel stream continues on quasi_status incomplete and streams plain text (tool calling removed)', async () => {
   const { frames, fetchURLs } = await runMockVercelStreamSequence([
     [
       'data: {"response_message_id":7,"p":"response/content","v":"<tool_calls><invoke name=\\"write_file\\"><parameter name=\\"content\\"><![CDATA[part-one"}\n\n',
@@ -362,10 +362,14 @@ test('vercel stream continues direct quasi_status incomplete before final tool c
   const parsed = frames.filter((frame) => frame !== '[DONE]').map((frame) => JSON.parse(frame));
   const toolDelta = parsed.find((item) => item.choices?.[0]?.delta?.tool_calls);
   assert.equal(fetchURLs.filter((url) => url === 'https://chat.deepseek.com/api/v0/chat/continue').length, 1);
-  assert.ok(toolDelta);
-  const args = JSON.parse(toolDelta.choices[0].delta.tool_calls[0].function.arguments);
-  assert.equal(args.content, 'part-one-part-two');
-  assert.equal(parsed.at(-1).choices[0].finish_reason, 'tool_calls');
+  // Tool calling removed: markup is streamed verbatim as plain text, never parsed.
+  assert.equal(toolDelta, undefined);
+  const combined = parsed
+    .map((item) => item.choices?.[0]?.delta?.content || '')
+    .join('');
+  assert.ok(combined.includes('part-one'));
+  assert.ok(combined.includes('part-two'));
+  assert.equal(parsed.at(-1).choices[0].finish_reason, 'stop');
 });
 
 
@@ -457,28 +461,28 @@ test('vercel stream keeps stop finish when content_filter arrives after visible 
   assert.equal(parsed[1].usage.completion_tokens, 1);
 });
 
-test('resolveToolcallPolicy defaults to feature-match + early emit when prepare flags missing', () => {
+test('resolveToolcallPolicy is disabled after tool-call removal (plain text only)', () => {
   const policy = resolveToolcallPolicy(
     {},
     [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
   );
-  assert.deepEqual(policy.toolNames, ['read_file']);
-  assert.equal(policy.toolSieveEnabled, true);
-  assert.equal(policy.emitEarlyToolDeltas, true);
+  assert.deepEqual(policy.toolNames, []);
+  assert.equal(policy.toolSieveEnabled, false);
+  assert.equal(policy.emitEarlyToolDeltas, false);
 });
 
-test('resolveToolcallPolicy ignores prepare flags and keeps early emit enabled', () => {
+test('resolveToolcallPolicy stays disabled regardless of prepare flags', () => {
   const policy = resolveToolcallPolicy(
     {
       tool_names: [' prepped_tool ', '', null],
-      toolcall_feature_match: false,
-      toolcall_early_emit_high: false,
+      toolcall_feature_match: true,
+      toolcall_early_emit_high: true,
     },
     [{ type: 'function', function: { name: 'fallback_tool', parameters: { type: 'object' } } }],
   );
-  assert.deepEqual(policy.toolNames, ['prepped_tool']);
-  assert.equal(policy.toolSieveEnabled, true);
-  assert.equal(policy.emitEarlyToolDeltas, true);
+  assert.deepEqual(policy.toolNames, []);
+  assert.equal(policy.toolSieveEnabled, false);
+  assert.equal(policy.emitEarlyToolDeltas, false);
 });
 
 test('normalizePreparedToolNames filters empty values', () => {

@@ -3,8 +3,6 @@ package shared
 import (
 	"regexp"
 	"strings"
-
-	"ds2api/internal/toolcall"
 )
 
 var emptyJSONFencePattern = regexp.MustCompile("(?is)```json\\s*```")
@@ -58,40 +56,8 @@ func sanitizeLeakedOutput(text string) string {
 	out = leakedBOSMarkerPattern.ReplaceAllString(out, "")
 	out = leakedThoughtMarkerPattern.ReplaceAllString(out, "")
 	out = leakedMetaMarkerPattern.ReplaceAllString(out, "")
-	out = stripLeakedToolCallWrapperBlocks(out)
 	out = sanitizeLeakedAgentXMLBlocks(out)
 	return out
-}
-
-func stripLeakedToolCallWrapperBlocks(text string) string {
-	if text == "" {
-		return text
-	}
-	var b strings.Builder
-	pos := 0
-	for pos < len(text) {
-		tag, ok := toolcall.FindToolMarkupTagOutsideIgnored(text, pos)
-		if !ok {
-			b.WriteString(text[pos:])
-			break
-		}
-		if tag.Start > pos {
-			b.WriteString(text[pos:tag.Start])
-		}
-		if tag.Closing || tag.Name != "tool_calls" {
-			b.WriteString(text[tag.Start : tag.End+1])
-			pos = tag.End + 1
-			continue
-		}
-		closeTag, ok := toolcall.FindMatchingToolMarkupClose(text, tag)
-		if !ok {
-			b.WriteString(text[tag.Start : tag.End+1])
-			pos = tag.End + 1
-			continue
-		}
-		pos = closeTag.End + 1
-	}
-	return b.String()
 }
 
 func stripDanglingThinkSuffix(text string) string {

@@ -75,8 +75,7 @@ func (h *Handler) prepareResponsesStreamRuntime(w http.ResponseWriter, resp *htt
 	}
 	streamRuntime := newResponsesStreamRuntime(
 		w, rc, canFlush, responseID, model, finalPrompt, thinkingEnabled, searchEnabled,
-		stripReferenceMarkersEnabled(), toolNames, toolsRaw, len(toolNames) > 0,
-		h.toolcallFeatureMatchEnabled() && h.toolcallEarlyEmitHighConfidence(),
+		stripReferenceMarkersEnabled(), toolNames, toolsRaw,
 		toolChoice, traceID, func(obj map[string]any) {
 			h.getResponseStore().put(owner, responseID, obj)
 		}, historySession,

@@ -1,20 +1,17 @@
 package responses
 
 import (
-	"ds2api/internal/assistantturn"
-	"ds2api/internal/auth"
-	"ds2api/internal/toolcall"
 	"net/http"
 	"strings"
 
-	"ds2api/internal/config"
+	"ds2api/internal/assistantturn"
+	"ds2api/internal/auth"
 	openaifmt "ds2api/internal/format/openai"
 	"ds2api/internal/httpapi/openai/shared"
 	"ds2api/internal/promptcompat"
 	"ds2api/internal/responsehistory"
 	"ds2api/internal/sse"
 	streamengine "ds2api/internal/stream"
-	"ds2api/internal/toolstream"
 )
 
 type responsesStreamRuntime struct {
@@ -35,22 +32,9 @@ type responsesStreamRuntime struct {
 	searchEnabled         bool
 	stripReferenceMarkers bool
 
-	bufferToolContent    bool
-	emitEarlyToolDeltas  bool
-	toolCallsEmitted     bool
-	toolCallsDoneEmitted bool
-
-	sieve             toolstream.State
 	accumulator       shared.StreamAccumulator
 	visibleText       strings.Builder
 	responseMessageID int
-	streamToolCallIDs map[int]string
-	functionItemIDs   map[int]string
-	functionOutputIDs map[int]int
-	functionArgs      map[int]string
-	functionDone      map[int]bool
-	functionAdded     map[int]bool
-	functionNames     map[int]string
 	messageItemID     string
 	messageOutputID   int
 	nextOutputID      int
@@ -79,8 +63,6 @@ func newResponsesStreamRuntime(
 	stripReferenceMarkers bool,
 	toolNames []string,
 	toolsRaw any,
-	bufferToolContent bool,
-	emitEarlyToolDeltas bool,
 	toolChoice promptcompat.ToolChoicePolicy,
 	traceID string,
 	persistResponse func(obj map[string]any),
@@ -98,15 +80,6 @@ func newResponsesStreamRuntime(
 		stripReferenceMarkers: stripReferenceMarkers,
 		toolNames:             toolNames,
 		toolsRaw:              toolsRaw,
-		bufferToolContent:     bufferToolContent,
-		emitEarlyToolDeltas:   emitEarlyToolDeltas,
-		streamToolCallIDs:     map[int]string{},
-		functionItemIDs:       map[int]string{},
-		functionOutputIDs:     map[int]int{},
-		functionArgs:          map[int]string{},
-		functionDone:          map[int]bool{},
-		functionAdded:         map[int]bool{},
-		functionNames:         map[int]string{},
 		messageOutputID:       -1,
 		toolChoice:            toolChoice,
 		traceID:               traceID,
@@ -163,23 +136,18 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 	s.finalErrorStatus = 0
 	s.finalErrorMessage = ""
 	s.finalErrorCode = ""
-	if s.bufferToolContent {
-		s.processToolStreamEvents(toolstream.Flush(&s.sieve, s.toolNames), true, true)
-	}
 
 	finalThinking := s.accumulator.Thinking.String()
 	finalToolDetectionThinking := s.accumulator.ToolDetectionThinking.String()
 	finalText := s.accumulator.Text.String()
 	turn := assistantturn.BuildTurnFromStreamSnapshot(assistantturn.StreamSnapshot{
-		RawText:               s.accumulator.RawText.String(),
-		VisibleText:           finalText,
-		RawThinking:           s.accumulator.RawThinking.String(),
-		VisibleThinking:       finalThinking,
-		DetectionThinking:     finalToolDetectionThinking,
-		ContentFilter:         finishReason == "content_filter",
-		ResponseMessageID:     s.responseMessageID,
-		AlreadyEmittedCalls:   s.toolCallsEmitted,
-		AlreadyEmittedToolRaw: s.toolCallsDoneEmitted,
+		RawText:           s.accumulator.RawText.String(),
+		VisibleText:       finalText,
+		RawThinking:       s.accumulator.RawThinking.String(),
+		VisibleThinking:   finalThinking,
+		DetectionThinking: finalToolDetectionThinking,
+		ContentFilter:     finishReason == "content_filter",
+		ResponseMessageID: s.responseMessageID,
 	}, assistantturn.BuildOptions{
 		Model:                 s.model,
 		Prompt:                s.finalPrompt,
@@ -190,22 +158,10 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 		ToolsRaw:              s.toolsRaw,
 		ToolChoice:            s.toolChoice,
 	})
-	textParsed := turn.ParsedToolCalls
-	detected := turn.ToolCalls
-	s.logToolPolicyRejections(textParsed)
-
-	if len(detected) > 0 {
-		s.toolCallsEmitted = true
-		if !s.toolCallsDoneEmitted {
-			s.emitFunctionCallDoneEvents(detected)
-		}
-	}
 
 	s.closeMessageItem()
 
-	outcome := assistantturn.FinalizeTurn(turn, assistantturn.FinalizeOptions{
-		AlreadyEmittedToolCalls: s.toolCallsEmitted || s.toolCallsDoneEmitted,
-	})
+	outcome := assistantturn.FinalizeTurn(turn, assistantturn.FinalizeOptions{})
 	if outcome.ShouldFail {
 		status, message, code := outcome.Error.Status, outcome.Error.Message, outcome.Error.Code
 		if deferEmptyOutput {
@@ -217,9 +173,8 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 		s.failResponse(status, message, code)
 		return true
 	}
-	s.closeIncompleteFunctionItems()
 
-	obj := s.buildCompletedResponseObject(turn.Thinking, turn.Text, detected)
+	obj := s.buildCompletedResponseObject(turn.Thinking, turn.Text)
 	if s.persistResponse != nil {
 		s.persistResponse(obj)
 	}
@@ -239,23 +194,6 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 	s.sendEvent("response.completed", openaifmt.BuildResponsesCompletedPayload(obj))
 	s.sendDone()
 	return true
-}
-
-func (s *responsesStreamRuntime) logToolPolicyRejections(textParsed toolcall.ToolCallParseResult) {
-	logRejected := func(parsed toolcall.ToolCallParseResult, channel string) {
-		rejected := filteredRejectedToolNamesForLog(parsed.RejectedToolNames)
-		if !parsed.RejectedByPolicy || len(rejected) == 0 {
-			return
-		}
-		config.Logger.Warn(
-			"[responses] rejected tool calls by policy",
-			"trace_id", strings.TrimSpace(s.traceID),
-			"channel", channel,
-			"tool_choice_mode", s.toolChoice.Mode,
-			"rejected_tool_names", strings.Join(rejected, ","),
-		)
-	}
-	logRejected(textParsed, "text")
 }
 
 func (s *responsesStreamRuntime) onParsed(parsed sse.LineResult) streamengine.ParsedDecision {
@@ -285,12 +223,7 @@ func (s *responsesStreamRuntime) onParsed(parsed sse.LineResult) streamengine.Pa
 		if p.CitationOnly {
 			continue
 		}
-		if !s.bufferToolContent {
-			batch.append("text", p.VisibleText)
-			continue
-		}
-		batch.flush()
-		s.processToolStreamEvents(toolstream.ProcessChunk(&s.sieve, p.RawText, s.toolNames), true, true)
+		batch.append("text", p.VisibleText)
 	}
 
 	batch.flush()

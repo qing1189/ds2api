@@ -63,8 +63,6 @@ ds2api/
 │   ├── stream/                           # 统一流式消费引擎
 │   ├── testsuite/                        # 测试集执行框架
 │   ├── textclean/                        # 文本清洗
-│   ├── toolcall/                         # 工具调用解析与修复
-│   ├── toolstream/                       # Go 流式 tool call 防泄漏与增量检测
 │   ├── translatorcliproxy/               # Vercel/fallback/测试用协议互转桥
 │   ├── util/                             # 通用工具函数
 │   ├── version/                          # 版本查询/比较
@@ -134,7 +132,6 @@ flowchart LR
         CR[internal/completionruntime]
         TURN[internal/assistantturn]
         STREAM[internal/stream + internal/sse]
-        TOOL[internal/toolcall + internal/toolstream]
         FMT[internal/format/openai + claude]
         DS[internal/deepseek/client]
         POW[pow + internal/deepseek/protocol]
@@ -142,7 +139,7 @@ flowchart LR
 
     subgraph NODE[Vercel Node Runtime]
         NCS[api/chat-stream.js]
-        JS[internal/js/chat-stream + stream-tool-sieve]
+        JS[internal/js/chat-stream]
     end
 
     R --> OA --> CHAT
@@ -165,7 +162,6 @@ flowchart LR
 
     NCS -.Go prepare/release.-> CHAT
     NCS --> JS
-    JS --> TOOL
 
     AUTH --> POOL
     CHAT --> CR
@@ -176,7 +172,6 @@ flowchart LR
     CR --> STREAM
     CR --> TURN
     STREAM --> TURN
-    STREAM --> TOOL
     TURN --> FMT
     POOL --> CR
     DS --> POW
@@ -186,18 +181,17 @@ flowchart LR
 ## 3. internal/ 子模块职责
 
 - `internal/server`：路由树和中间件挂载（健康检查、协议入口、Admin/WebUI）。
-- `internal/httpapi/openai/*`：OpenAI HTTP surface，按 chat、responses、files、embeddings、history、shared 拆分；chat/responses 共享 promptcompat、stream、toolcall 等核心语义。
+- `internal/httpapi/openai/*`：OpenAI HTTP surface，按 chat、responses、files、embeddings、history、shared 拆分；chat/responses 共享 promptcompat、stream 等核心语义。（工具调用 / DSML 适配已移除）
 - `internal/httpapi/{claude,gemini}`：协议输入输出适配，归一到同一套 prompt compatibility 语义；正常直连路径必须通过 `completionruntime` 共享 DeepSeek session/PoW/completion 调用，`translatorcliproxy` 仅保留给 Vercel prepare/release、后端缺失 fallback 和回归测试。
 - `internal/httpapi/ollama`：Ollama 兼容的模型列表与能力查询入口。
 - `internal/httpapi/requestbody`：跨协议复用的请求体读取、JSON 解码前置校验与 UTF-8 错误处理辅助。
 - `internal/promptcompat`：OpenAI/Claude/Gemini 请求到 DeepSeek 网页纯文本上下文的兼容内核。
-- `internal/assistantturn`：Go 输出侧统一语义层，把 DeepSeek SSE 收集结果和流式收尾状态归一成 assistant turn，集中处理 thinking、tool call、citation、usage、stop/error 语义。
+- `internal/assistantturn`：Go 输出侧统一语义层，把 DeepSeek SSE 收集结果和流式收尾状态归一成 assistant turn，集中处理 thinking、citation、usage、stop/error 语义。（工具调用已移除）
 - `internal/completionruntime`：Go surface 共享的 completion 执行辅助，负责 DeepSeek session/PoW/call 启动、非流式 collect、empty-output retry，以及托管账号在最终 429 前的一次切号 fresh retry；流式路径复用它启动上游请求，继续用 `internal/stream` 做实时消费，并在最终收尾阶段接入 `assistantturn`。
 - `internal/translatorcliproxy`：Claude/Gemini 与 OpenAI 结构互转的桥接兼容层，不作为主业务协议转换中心。
 - `internal/deepseek/{client,protocol,transport}`：上游请求、会话、PoW 适配、协议常量与传输层。
-- `internal/js/chat-stream` + `api/chat-stream.js`：Vercel Node 流式桥；Go prepare/release 管理鉴权、账号租约和 completion payload，Node 侧负责实时 SSE 转发并保持 Go 对齐的终结态和 tool sieve 语义。
+- `internal/js/chat-stream` + `api/chat-stream.js`：Vercel Node 流式桥；Go prepare/release 管理鉴权、账号租约和 completion payload，Node 侧负责实时 SSE 转发并保持 Go 对齐的终结态（纯文本，工具调用已移除）。
 - `internal/stream` + `internal/sse`：Go 流式解析与增量处理。
-- `internal/toolcall` + `internal/toolstream`：DSML 外壳兼容与 canonical XML 工具调用解析、防泄漏筛分；DSML 会在入口归一化回 XML，内部仍按 XML 语义解析。
 - `internal/httpapi/admin/*`：Admin API 根装配与 auth/accounts/config/settings/proxies/rawsamples/vercel/history/devcapture/version 等资源子包。
 - `internal/chathistory`：服务器端对话记录持久化、分页、单条详情和保留策略。
 - `internal/responsehistory`：DeepSeek 上游响应归档，会在协议回译/裁剪前保存 assistant text、thinking、tool-call 原始片段和流式详情。
@@ -223,4 +217,4 @@ flowchart LR
 - 架构与目录：`docs/ARCHITECTURE.md`（本文件）
 - 接口协议：`API.md`
 - 部署、测试、贡献：`docs/DEPLOY.md`、`docs/TESTING.md`、`docs/CONTRIBUTING.md`
-- 专题：`docs/toolcall-semantics.md`、`docs/DeepSeekSSE行为结构说明-2026-04-05.md`
+- 专题：`docs/DeepSeekSSE行为结构说明-2026-04-05.md`

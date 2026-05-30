@@ -1,13 +1,14 @@
 package openai
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
-	"ds2api/internal/toolcall"
 	"ds2api/internal/util"
 )
+
+// Tool calling has been removed. Any tool-looking payloads in the model output
+// are now rendered as plain text, never promoted to function calls.
 
 func TestBuildResponseObjectKeepsFencedToolPayloadAsText(t *testing.T) {
 	obj := BuildResponseObject(
@@ -32,11 +33,6 @@ func TestBuildResponseObjectKeepsFencedToolPayloadAsText(t *testing.T) {
 	if first["type"] != "message" {
 		t.Fatalf("expected message output type, got %#v", first["type"])
 	}
-}
-
-// Backward-compatible alias for historical test name used in CI logs.
-func TestBuildResponseObjectPromotesFencedToolPayloadToFunctionCall(t *testing.T) {
-	TestBuildResponseObjectKeepsFencedToolPayloadAsText(t)
 }
 
 func TestBuildResponseObjectReasoningOnlyFallsBackToOutputText(t *testing.T) {
@@ -73,121 +69,26 @@ func TestBuildResponseObjectReasoningOnlyFallsBackToOutputText(t *testing.T) {
 	}
 }
 
-func TestBuildResponseObjectPromotesToolCallFromThinkingWhenTextEmpty(t *testing.T) {
-	obj := BuildResponseObject(
-		"resp_test",
-		"gpt-4o",
-		"prompt",
-		`<tool_calls><invoke name="search"><parameter name="q">from-thinking</parameter></invoke></tool_calls>`,
-		"",
-		[]string{"search"},
-		nil,
-	)
-
-	output, _ := obj["output"].([]any)
-	if len(output) != 2 {
-		t.Fatalf("expected reasoning message plus function_call output, got %#v", obj["output"])
-	}
-	first, _ := output[0].(map[string]any)
-	if first["type"] != "message" {
-		t.Fatalf("expected reasoning message output first, got %#v", first["type"])
-	}
-	content, _ := first["content"].([]any)
-	if len(content) != 1 {
-		t.Fatalf("expected reasoning content, got %#v", first["content"])
-	}
-	block0, _ := content[0].(map[string]any)
-	if block0["type"] != "reasoning" {
-		t.Fatalf("expected reasoning block, got %#v", block0["type"])
-	}
-	second, _ := output[1].(map[string]any)
-	if second["type"] != "function_call" {
-		t.Fatalf("expected function_call output, got %#v", second["type"])
-	}
-}
-
-func TestBuildChatCompletionWithToolCallsCoercesSchemaDeclaredStringArguments(t *testing.T) {
-	toolsRaw := []any{
-		map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name": "Write",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"content": map[string]any{"type": "string"},
-						"taskId":  map[string]any{"type": "string"},
-					},
-				},
-			},
-		},
-	}
-	obj := BuildChatCompletionWithToolCalls(
+func TestBuildChatCompletionRendersPlainText(t *testing.T) {
+	obj := BuildChatCompletion(
 		"chat_test",
 		"gpt-4o",
 		"prompt",
 		"",
-		"",
-		[]toolcall.ParsedToolCall{{
-			Name: "Write",
-			Input: map[string]any{
-				"content": map[string]any{"message": "hi"},
-				"taskId":  1,
-			},
-		}},
-		toolsRaw,
+		`<tool_calls><invoke name="Write"><parameter name="content">x</parameter></invoke></tool_calls>`,
+		[]string{"Write"},
+		nil,
 	)
 	choices, _ := obj["choices"].([]map[string]any)
+	if len(choices) != 1 || choices[0]["finish_reason"] != "stop" {
+		t.Fatalf("expected single stop choice, got %#v", obj["choices"])
+	}
 	message, _ := choices[0]["message"].(map[string]any)
-	toolCalls, _ := message["tool_calls"].([]map[string]any)
-	fn, _ := toolCalls[0]["function"].(map[string]any)
-	args := map[string]any{}
-	if err := json.Unmarshal([]byte(fn["arguments"].(string)), &args); err != nil {
-		t.Fatalf("decode arguments failed: %v", err)
+	if _, hasTool := message["tool_calls"]; hasTool {
+		t.Fatalf("expected no tool_calls in message, got %#v", message)
 	}
-	if args["content"] != `{"message":"hi"}` {
-		t.Fatalf("expected content stringified by schema, got %#v", args["content"])
-	}
-	if args["taskId"] != "1" {
-		t.Fatalf("expected taskId stringified by schema, got %#v", args["taskId"])
-	}
-}
-
-func TestBuildResponseObjectWithToolCallsCoercesSchemaDeclaredStringArguments(t *testing.T) {
-	toolsRaw := []any{
-		map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name": "Write",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"content": map[string]any{"type": "string"},
-					},
-				},
-			},
-		},
-	}
-	obj := BuildResponseObjectWithToolCalls(
-		"resp_test",
-		"gpt-4o",
-		"prompt",
-		"",
-		"",
-		[]toolcall.ParsedToolCall{{
-			Name:  "Write",
-			Input: map[string]any{"content": []any{"a", 1}},
-		}},
-		toolsRaw,
-	)
-	output, _ := obj["output"].([]any)
-	first, _ := output[0].(map[string]any)
-	args := map[string]any{}
-	if err := json.Unmarshal([]byte(first["arguments"].(string)), &args); err != nil {
-		t.Fatalf("decode response arguments failed: %v", err)
-	}
-	if args["content"] != `["a",1]` {
-		t.Fatalf("expected response content stringified by schema, got %#v", args["content"])
+	if message["content"] == nil || message["content"] == "" {
+		t.Fatalf("expected tool markup preserved as plain text content, got %#v", message["content"])
 	}
 }
 

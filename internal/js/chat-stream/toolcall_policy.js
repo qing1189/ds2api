@@ -2,20 +2,14 @@
 
 const crypto = require('crypto');
 
-const {
-  extractToolNames,
-} = require('../helpers/stream-tool-sieve');
-
-function resolveToolcallPolicy(prepBody, payloadTools) {
-  const preparedToolNames = normalizePreparedToolNames(prepBody && prepBody.tool_names);
-  let toolNames = preparedToolNames.length > 0 ? preparedToolNames : extractToolNames(payloadTools);
-  if (toolNames.length === 0 && Array.isArray(payloadTools) && payloadTools.length > 0) {
-    toolNames = ['__any_tool__'];
-  }
+function resolveToolcallPolicy(_prepBody, _payloadTools) {
+  // Tool calling has been removed. The Vercel/Node streaming path now always
+  // streams plain conversation text and never runs the tool sieve, matching the
+  // Go backend behavior.
   return {
-    toolNames,
-    toolSieveEnabled: toolNames.length > 0,
-    emitEarlyToolDeltas: true,
+    toolNames: [],
+    toolSieveEnabled: false,
+    emitEarlyToolDeltas: false,
   };
 }
 

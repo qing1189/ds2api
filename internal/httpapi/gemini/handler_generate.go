@@ -20,7 +20,6 @@ import (
 	"ds2api/internal/promptcompat"
 	"ds2api/internal/responsehistory"
 	"ds2api/internal/sse"
-	"ds2api/internal/toolcall"
 	"ds2api/internal/translatorcliproxy"
 	"ds2api/internal/util"
 
@@ -383,28 +382,10 @@ func buildGeminiGenerateContentResponseFromTurn(turn assistantturn.Turn) map[str
 }
 
 func buildGeminiPartsFromTurn(turn assistantturn.Turn) []map[string]any {
-	thinkingPart := func() []map[string]any {
-		if turn.Thinking == "" {
-			return nil
-		}
-		return []map[string]any{{"text": turn.Thinking, "thought": true}}
+	var parts []map[string]any
+	if turn.Thinking != "" {
+		parts = append(parts, map[string]any{"text": turn.Thinking, "thought": true})
 	}
-	if len(turn.ToolCalls) > 0 {
-		parts := thinkingPart()
-		if parts == nil {
-			parts = make([]map[string]any, 0, len(turn.ToolCalls))
-		}
-		for _, tc := range turn.ToolCalls {
-			parts = append(parts, map[string]any{
-				"functionCall": map[string]any{
-					"name": tc.Name,
-					"args": tc.Input,
-				},
-			})
-		}
-		return parts
-	}
-	parts := thinkingPart()
 	if turn.Text != "" {
 		parts = append(parts, map[string]any{"text": turn.Text})
 	}
@@ -427,34 +408,11 @@ func buildGeminiUsage(model, finalPrompt, finalThinking, finalText string) map[s
 }
 
 //nolint:unused // retained for native Gemini non-stream handling path.
-func buildGeminiPartsFromFinal(finalText, finalThinking string, toolNames []string) []map[string]any {
-	detected := toolcall.ParseToolCalls(finalText, toolNames)
-	if len(detected) == 0 && finalThinking != "" {
-		detected = toolcall.ParseToolCalls(finalThinking, toolNames)
+func buildGeminiPartsFromFinal(finalText, finalThinking string, _ []string) []map[string]any {
+	var parts []map[string]any
+	if finalThinking != "" {
+		parts = append(parts, map[string]any{"text": finalThinking, "thought": true})
 	}
-	thinkingPart := func() []map[string]any {
-		if finalThinking == "" {
-			return nil
-		}
-		return []map[string]any{{"text": finalThinking, "thought": true}}
-	}
-	if len(detected) > 0 {
-		parts := thinkingPart()
-		if parts == nil {
-			parts = make([]map[string]any, 0, len(detected))
-		}
-		for _, tc := range detected {
-			parts = append(parts, map[string]any{
-				"functionCall": map[string]any{
-					"name": tc.Name,
-					"args": tc.Input,
-				},
-			})
-		}
-		return parts
-	}
-
-	parts := thinkingPart()
 	if finalText != "" {
 		parts = append(parts, map[string]any{"text": finalText})
 	}

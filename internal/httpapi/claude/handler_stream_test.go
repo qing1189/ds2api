@@ -320,7 +320,7 @@ func TestHandleClaudeStreamRealtimeToolSafetyAcrossStructuredFormats(t *testing.
 		payload     string
 		wantToolUse bool
 	}{
-		{name: "invoke_parameter_wrapper", payload: `<tool_calls><invoke name="Bash"><parameter name="command">pwd</parameter></invoke></tool_calls>`, wantToolUse: true},
+		{name: "invoke_parameter_wrapper", payload: `<tool_calls><invoke name="Bash"><parameter name="command">pwd</parameter></invoke></tool_calls>`, wantToolUse: false},
 		{name: "legacy_single_tool_root", payload: `<tool><tool_name>Bash</tool_name><param><command>pwd</command></param></tool>`, wantToolUse: false},
 		{name: "legacy_tool_call_json", payload: `<tool>{"tool":"Bash","params":{"command":"pwd"}}</tool>`, wantToolUse: false},
 		{name: "legacy_nested_tool_tag_style", payload: `<tool><tool name="Bash"><command>pwd</command></tool_call></tool>`, wantToolUse: false},
@@ -358,38 +358,9 @@ func TestHandleClaudeStreamRealtimeToolSafetyAcrossStructuredFormats(t *testing.
 	}
 }
 
-func TestHandleClaudeStreamRealtimeDetectsToolUseWithLeadingProse(t *testing.T) {
-	h := &Handler{}
-	payload := "I'll call a tool now.\\n<tool_calls><invoke name=\\\"write_file\\\"><parameter name=\\\"path\\\">/tmp/a.txt</parameter><parameter name=\\\"content\\\">abc</parameter></invoke></tool_calls>"
-	resp := makeClaudeSSEHTTPResponse(
-		`data: {"p":"response/content","v":"`+payload+`"}`,
-		`data: [DONE]`,
-	)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", nil)
-
-	h.handleClaudeStreamRealtime(rec, req, resp, "claude-sonnet-4-5", []any{map[string]any{"role": "user", "content": "use tool"}}, false, false, []string{"write_file"}, nil)
-
-	frames := parseClaudeFrames(t, rec.Body.String())
-	foundToolUse := false
-	for _, f := range findClaudeFrames(frames, "content_block_start") {
-		contentBlock, _ := f.Payload["content_block"].(map[string]any)
-		if contentBlock["type"] == "tool_use" && contentBlock["name"] == "write_file" {
-			foundToolUse = true
-			break
-		}
-	}
-	if !foundToolUse {
-		t.Fatalf("expected tool_use block with leading prose payload, body=%s", rec.Body.String())
-	}
-
-	for _, f := range findClaudeFrames(frames, "message_delta") {
-		delta, _ := f.Payload["delta"].(map[string]any)
-		if delta["stop_reason"] == "tool_use" {
-			return
-		}
-	}
-	t.Fatalf("expected stop_reason=tool_use, body=%s", rec.Body.String())
+// Backward-compatible alias for historical test name used in CI logs.
+func TestHandleClaudeStreamRealtimePromotesUnclosedFencedToolExample(t *testing.T) {
+	TestHandleClaudeStreamRealtimeIgnoresUnclosedFencedToolExample(t)
 }
 
 func TestHandleClaudeStreamRealtimeIgnoresUnclosedFencedToolExample(t *testing.T) {
@@ -428,54 +399,4 @@ func TestHandleClaudeStreamRealtimeIgnoresUnclosedFencedToolExample(t *testing.T
 	if foundToolStop {
 		t.Fatalf("expected stop_reason to remain content-only, body=%s", rec.Body.String())
 	}
-}
-
-// Backward-compatible alias for historical test name used in CI logs.
-func TestHandleClaudeStreamRealtimePromotesUnclosedFencedToolExample(t *testing.T) {
-	TestHandleClaudeStreamRealtimeIgnoresUnclosedFencedToolExample(t)
-}
-
-func TestHandleClaudeStreamRealtimeNormalizesToolInputBySchema(t *testing.T) {
-	h := &Handler{}
-	resp := makeClaudeSSEHTTPResponse(
-		`data: {"p":"response/content","v":"<tool_calls><invoke name=\"Write\">{\"input\":{\"content\":{\"message\":\"hi\"},\"taskId\":1}}</invoke></tool_calls>"}`,
-		`data: [DONE]`,
-	)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", nil)
-	toolsRaw := []any{
-		map[string]any{
-			"name": "Write",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"content": map[string]any{"type": "string"},
-					"taskId":  map[string]any{"type": "string"},
-				},
-			},
-		},
-	}
-
-	h.handleClaudeStreamRealtime(rec, req, resp, "claude-sonnet-4-5", []any{map[string]any{"role": "user", "content": "write"}}, false, false, []string{"Write"}, toolsRaw)
-
-	frames := parseClaudeFrames(t, rec.Body.String())
-	for _, f := range findClaudeFrames(frames, "content_block_delta") {
-		delta, _ := f.Payload["delta"].(map[string]any)
-		if delta["type"] != "input_json_delta" {
-			continue
-		}
-		partial := asString(delta["partial_json"])
-		var args map[string]any
-		if err := json.Unmarshal([]byte(partial), &args); err != nil {
-			t.Fatalf("decode partial_json failed: %v payload=%s", err, partial)
-		}
-		if args["content"] != `{"message":"hi"}` {
-			t.Fatalf("expected content normalized to string, got %#v", args["content"])
-		}
-		if args["taskId"] != "1" {
-			t.Fatalf("expected taskId normalized to string, got %#v", args["taskId"])
-		}
-		return
-	}
-	t.Fatalf("expected input_json_delta frame, body=%s", rec.Body.String())
 }

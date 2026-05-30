@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"ds2api/internal/config"
-	"ds2api/internal/prompt"
 )
 
 func normalizeResponsesInputItem(m map[string]any) map[string]any {
@@ -133,7 +132,7 @@ func normalizeResponsesInputItemWithState(m map[string]any, callNameByID map[str
 
 		functionPayload := map[string]any{
 			"name":      name,
-			"arguments": prompt.StringifyToolCallArguments(argsRaw),
+			"arguments": StringifyToolCallArguments(argsRaw),
 		}
 		call := map[string]any{
 			"type":     "function",

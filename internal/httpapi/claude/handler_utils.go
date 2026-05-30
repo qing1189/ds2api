@@ -1,12 +1,9 @@
 package claude
 
 import (
-	"ds2api/internal/toolcall"
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"ds2api/internal/prompt"
 )
 
 func normalizeClaudeMessages(messages []any) []any {
@@ -143,54 +140,6 @@ func extractClaudeThinkingBlockText(block map[string]any) string {
 	return ""
 }
 
-func buildClaudeToolPrompt(tools []any) string {
-	toolSchemas := make([]string, 0, len(tools))
-	names := make([]string, 0, len(tools))
-	for _, t := range tools {
-		m, ok := t.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, desc, schemaObj := extractClaudeToolMeta(m)
-		if name == "" {
-			continue
-		}
-		names = append(names, name)
-		schema, _ := json.Marshal(schemaObj)
-		toolSchemas = append(toolSchemas, fmt.Sprintf("Tool: %s\nDescription: %s\nParameters: %s", name, desc, schema))
-	}
-	if len(toolSchemas) == 0 {
-		return ""
-	}
-	return "You have access to these tools:\n\n" +
-		strings.Join(toolSchemas, "\n\n") + "\n\n" +
-		toolcall.BuildToolCallInstructions(names)
-}
-
-//nolint:unused // retained for compatibility with pending Claude tool-result prompt flow.
-func formatClaudeToolResultForPrompt(block map[string]any) string {
-	if block == nil {
-		return ""
-	}
-	payload := map[string]any{
-		"type":    "tool_result",
-		"content": block["content"],
-	}
-	if toolCallID := strings.TrimSpace(fmt.Sprintf("%v", block["tool_use_id"])); toolCallID != "" {
-		payload["tool_call_id"] = toolCallID
-	} else if toolCallID := strings.TrimSpace(fmt.Sprintf("%v", block["tool_call_id"])); toolCallID != "" {
-		payload["tool_call_id"] = toolCallID
-	}
-	if name := strings.TrimSpace(fmt.Sprintf("%v", block["name"])); name != "" {
-		payload["name"] = name
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return strings.TrimSpace(fmt.Sprintf("%v", payload))
-	}
-	return string(b)
-}
-
 func normalizeClaudeToolUseToAssistant(block map[string]any, state *claudeToolCallState) map[string]any {
 	if block == nil {
 		return nil
@@ -216,20 +165,15 @@ func normalizeClaudeToolUseToAssistant(block map[string]any, state *claudeToolCa
 	if err != nil || len(argsJSON) == 0 {
 		argsJSON = []byte("{}")
 	}
-	toolCalls := []any{
-		map[string]any{
-			"id":   callID,
-			"type": "function",
-			"function": map[string]any{
-				"name":      name,
-				"arguments": string(argsJSON),
-			},
-		},
+	// Tool calling removed: represent the prior tool call as plain conversational
+	// history text instead of DSML / structured tool_calls.
+	content := name
+	if string(argsJSON) != "{}" {
+		content = name + "\n" + string(argsJSON)
 	}
 	return map[string]any{
-		"role":       "assistant",
-		"content":    prompt.FormatToolCallsForPrompt(toolCalls),
-		"tool_calls": toolCalls,
+		"role":    "assistant",
+		"content": content,
 	}
 }
 

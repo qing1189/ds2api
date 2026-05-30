@@ -2,23 +2,10 @@
 
 // Implementation moved here to keep the line-gate wrapper tiny.
 
-const {
-  createToolSieveState,
-  processToolSieveChunk,
-  flushToolSieve,
-  parseStandaloneToolCalls,
-  formatOpenAIStreamToolCalls,
-} = require('../helpers/stream-tool-sieve');
 const { BASE_HEADERS } = require('../shared/deepseek-constants');
 const { writeOpenAIError, openAIErrorType } = require('./error_shape');
 const { parseChunkForContent, isCitation } = require('./sse_parse');
 const { buildUsage } = require('./token_usage');
-const {
-  resolveToolcallPolicy,
-  formatIncrementalToolCallDeltas,
-  filterIncrementalToolCallDeltasByAllowed,
-  resetStreamToolCallState,
-} = require('./toolcall_policy');
 const { createChatCompletionEmitter, createDeltaCoalescer } = require('./stream_emitter');
 const {
   asString,
@@ -55,9 +42,6 @@ async function handleVercelStream(req, res, rawBody, payload) {
   const finalPrompt = asString(prep.body.final_prompt);
   const thinkingEnabled = toBool(prep.body.thinking_enabled);
   const searchEnabled = toBool(prep.body.search_enabled);
-  const toolPolicy = resolveToolcallPolicy(prep.body, payload.tools);
-  const toolNames = toolPolicy.toolNames;
-  const emitEarlyToolDeltas = toolPolicy.emitEarlyToolDeltas;
   const stripReferenceMarkers = true;
 
   if (!model || !leaseID || !deepseekToken || !initialPowHeader || !completionPayload) {
@@ -176,12 +160,6 @@ async function handleVercelStream(req, res, rawBody, payload) {
     let thinkingText = '';
     let outputText = '';
     let usagePrompt = finalPrompt;
-    const toolSieveEnabled = toolPolicy.toolSieveEnabled;
-    const toolSieveState = createToolSieveState();
-    let toolCallsEmitted = false;
-    let toolCallsDoneEmitted = false;
-    const streamToolCallIDs = new Map();
-    const streamToolNames = new Map();
     const decoder = new TextDecoder();
     let buffered = '';
     let ended = false;
@@ -204,32 +182,8 @@ async function handleVercelStream(req, res, rawBody, payload) {
         return true;
       }
       deltaCoalescer.flush();
-      const detected = parseStandaloneToolCalls(outputText, toolNames);
-      if (detected.length > 0 && !toolCallsDoneEmitted) {
-        toolCallsEmitted = true;
-        toolCallsDoneEmitted = true;
-        sendDeltaFrame({ tool_calls: formatOpenAIStreamToolCalls(detected, streamToolCallIDs, payload.tools) });
-      } else if (toolSieveEnabled) {
-        const tailEvents = flushToolSieve(toolSieveState, toolNames);
-        for (const evt of tailEvents) {
-          if (evt.type === 'tool_calls' && Array.isArray(evt.calls) && evt.calls.length > 0) {
-            deltaCoalescer.flush();
-            toolCallsEmitted = true;
-            toolCallsDoneEmitted = true;
-            sendDeltaFrame({ tool_calls: formatOpenAIStreamToolCalls(evt.calls, streamToolCallIDs, payload.tools) });
-            resetStreamToolCallState(streamToolCallIDs, streamToolNames);
-            continue;
-          }
-          if (evt.text) {
-            deltaCoalescer.append('content', evt.text);
-          }
-        }
-        deltaCoalescer.flush();
-      }
-      if (detected.length > 0 || toolCallsEmitted) {
-        reason = 'tool_calls';
-      }
-      if (detected.length === 0 && !toolCallsEmitted && outputText.trim() === '') {
+      // Tool calling removed: never detect or emit tool_calls. Stream plain text.
+      if (outputText.trim() === '') {
         if (options.deferEmpty && reason !== 'content_filter') {
           return false;
         }
@@ -343,37 +297,7 @@ async function handleVercelStream(req, res, rawBody, payload) {
                     continue;
                   }
                   outputText += trimmed;
-                  if (!toolSieveEnabled) {
-                    deltaCoalescer.append('content', trimmed);
-                    continue;
-                  }
-                  const events = processToolSieveChunk(toolSieveState, trimmed, toolNames);
-                  for (const evt of events) {
-                    if (evt.type === 'tool_call_deltas') {
-                      if (!emitEarlyToolDeltas) {
-                        continue;
-                      }
-                      const filtered = filterIncrementalToolCallDeltasByAllowed(evt.deltas, toolNames, streamToolNames);
-                      const formatted = formatIncrementalToolCallDeltas(filtered, streamToolCallIDs);
-                      if (formatted.length > 0) {
-                        toolCallsEmitted = true;
-                        deltaCoalescer.flush();
-                        sendDeltaFrame({ tool_calls: formatted });
-                      }
-                      continue;
-                    }
-                    if (evt.type === 'tool_calls') {
-                      toolCallsEmitted = true;
-                      toolCallsDoneEmitted = true;
-                      deltaCoalescer.flush();
-                      sendDeltaFrame({ tool_calls: formatOpenAIStreamToolCalls(evt.calls, streamToolCallIDs, payload.tools) });
-                      resetStreamToolCallState(streamToolCallIDs, streamToolNames);
-                      continue;
-                    }
-                    if (evt.text) {
-                      deltaCoalescer.append('content', evt.text);
-                    }
-                  }
+                  deltaCoalescer.append('content', trimmed);
                 }
               }
               if (streamEnded) {

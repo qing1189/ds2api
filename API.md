@@ -38,7 +38,7 @@
 
 - OpenAI / Claude / Gemini 三套协议已统一挂在同一 `chi` 路由树上，由 `internal/server/router.go` 负责装配。
 - 适配器层职责收敛为：**请求归一化 → DeepSeek 调用 → 协议形态渲染**，减少历史版本中“同能力多处实现”的分叉。
-- Tool Calling 的解析策略在 Go 与 Node Runtime 间保持一致：推荐模型输出半角管道符 DSML 外壳 `<|DSML|tool_calls>` → `<|DSML|invoke name="...">` → `<|DSML|parameter name="...">`；兼容层也接受 DSML wrapper 别名 `<dsml|tool_calls>`、`<|tool_calls>`、常见 DSML 分隔符漏写形态（如 `<|DSML tool_calls>`）、`DSML` 与工具标签名黏连的常见 typo（如 `<DSMLtool_calls>`）、控制分隔符漂移（如 `<DSML␂tool_calls>` / 原始 STX `\x02`）、CJK 尖括号、全角感叹号、顿号、PascalCase 本地名、弯引号属性值与属性尾部分隔符漂移（如 `<DSM|parameter name="command"|>...〈/DSM|parameter〉` / `<！DSML！invoke name=“Bash”>` / `<、DSML、tool_calls>` / `<DSmartToolCalls>` / `<DSMLtool_calls※>`）、任意协议前缀壳（如 `<proto💥tool_calls>`），以及旧式 canonical XML `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`。实现上采用结构扫描：只要固定本地标签名是 `tool_calls` / `invoke` / `parameter`，标签名前或标签名后的非结构性分隔符会在解析入口归一化；CDATA 开头也会容错 `<！[CDATA[` / `<、[CDATA[` 这类分隔符漂移；只有 `tool_calls` wrapper 或可修复的缺失 opening wrapper 会进入工具路径，裸 `<invoke>` 不计为已支持语法；流式场景继续执行防泄漏筛分。若参数体本身是合法 JSON 字面量（如 `123`、`true`、`null`、数组或对象），会按结构化值输出，不再一律当作字符串；显式空字符串和纯空白参数会结构化保留为空字符串，是否拒绝缺参由工具执行侧决定；完整但 malformed 的 wrapper 会作为普通文本释放，不会吞掉或伪造成工具调用；若 CDATA 偶发漏闭合，则会在最终 parse / flush 恢复阶段做窄修复，尽量保住已完整包裹的外层工具调用。
+- 工具调用 / Function Calling 已整体移除：DeepSeek 网页端会检测 prompt 中注入的 DSML 工具标记并触发风控封号。客户端仍可在请求中携带 `tools` / `tool_choice` / `functions` / `tool_use` / `functionDeclarations` 等字段，但它们会被**接受并忽略**，既不报错也不改写发往 DeepSeek 的 prompt；模型输出一律按普通对话文本返回。
 - `Admin API` 将配置与运行时策略分开：`/admin/config*` 管静态配置，`/admin/settings*` 管运行时行为。
 - 当上游返回 thinking-only 响应（模型输出了推理链但无可见文本）时，Go 主路径与 Vercel Node 流式路径都会先自动重试一次：以多轮对话 follow-up 方式追加 prompt 后缀 `"Previous reply had no visible output. Please regenerate the visible final answer or tool call now."` 并设置 `parent_message_id` 在同一 DeepSeek session 内让模型重新输出；同账号重试最大 1 次。若同账号重试后仍即将返回 `429 upstream_empty_output`，托管账号模式会在返回 429 前自动切换到下一个可用账号，新建 session，用原始 payload 再 fresh retry 一次。
 - 引用标记处理边界：流式输出默认隐藏 `[citation:N]` / `[reference:N]` 这类上游内部占位符；非流式输出默认把 DeepSeek 搜索引用标记转换为 Markdown 引用链接。
@@ -262,7 +262,7 @@ Content-Type: application/json
 | `model` | string | ✅ | 支持 DeepSeek 原生模型 + 常见 alias（如 `gpt-5.5`、`gpt-5.4-mini`、`gpt-5.3-codex`、`o3`、`claude-opus-4-6`、`claude-sonnet-4-6`、`gemini-2.5-pro`、`gemini-3.1-pro`、`gemini-3-flash` 等）；若模型名带 `-nothinking` 后缀，则强制关闭 thinking / reasoning |
 | `messages` | array | ✅ | OpenAI 风格消息数组 |
 | `stream` | boolean | ❌ | 默认 `false` |
-| `tools` | array | ❌ | Function Calling 定义 |
+| `tools` | array | ❌ | 接受但忽略（工具调用已移除） |
 | `temperature` 等 | any | ❌ | 兼容透传字段（最终效果由上游决定） |
 
 #### 非流式响应
@@ -319,46 +319,9 @@ data: [DONE]
 - 最后一段包含 `finish_reason` 和 `usage`
 - token 计数优先透传上游 DeepSeek SSE（如 `accumulated_token_usage` / `token_usage`）；仅在上游缺失时回退本地估算。失败/中断型结束（例如 `response.failed`）可能不会携带 `usage`
 
-#### Tool Calls
+#### Tool Calls（已移除）
 
-当请求中含 `tools` 时，DS2API 做防泄漏处理：
-
-**非流式**：识别到工具调用时，返回 `message.tool_calls`，设置 `finish_reason=tool_calls`，`message.content=null`。
-
-```json
-{
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": null,
-        "tool_calls": [
-          {
-            "id": "call_xxx",
-            "type": "function",
-            "function": {
-              "name": "get_weather",
-              "arguments": "{\"city\":\"beijing\"}"
-            }
-          }
-        ]
-      },
-      "finish_reason": "tool_calls"
-    }
-  ]
-}
-```
-
-**流式**：命中高置信特征后立即输出 `delta.tool_calls`（不等待完整工具参数闭合），并持续发送 arguments 增量；已确认的工具调用片段不会回流到 `delta.content`。
-
-补充说明：
-
-- **非代码块上下文**下，工具负载即使与普通文本混合，也会按特征识别并产出可执行 tool call（前后普通文本仍可透传）。
-- 解析器当前把推荐半角管道符 DSML 外壳（`<|DSML|tool_calls>` / `<|DSML|invoke name="...">` / `<|DSML|parameter name="...">`）、DSML wrapper 别名（`<dsml|tool_calls>`、`<|tool_calls>`）、常见 DSML 分隔符漏写形态（如 `<|DSML tool_calls>` / `<|DSML invoke>` / `<|DSML parameter>`）、`DSML` 与工具标签名黏连的常见 typo（如 `<DSMLtool_calls>` / `<DSMLinvoke>` / `<DSMLparameter>`）、控制分隔符漂移（如 `<DSML␂tool_calls>` / 原始 STX `\x02`）、CJK 尖括号、全角感叹号、顿号、PascalCase 本地名、弯引号属性值与属性尾部分隔符漂移（如 `<DSM|parameter name="command"|>...〈/DSM|parameter〉` / `<！DSML！invoke name=“Bash”>` / `<、DSML、tool_calls>` / `<DSmartToolCalls>` / `<DSMLtool_calls※>`）、任意协议前缀壳（如 `<proto💥tool_calls>`）和旧式 canonical XML 工具块（`<tool_calls>` / `<invoke name="...">` / `<parameter name="...">`）作为可执行调用解析；这些非结构性分隔符壳会先归一化回 XML，内部仍以 XML 解析语义为准，CDATA 开头也会容错 `<！[CDATA[` / `<、[CDATA[`。旧式 `<tools>`、`<tool_call>`、`<tool_name>`、`<param>`、`<function_call>`、`tool_use`、antml 风格与纯 JSON `tool_calls` 片段默认都会按普通文本处理；完整但 malformed 的 wrapper 同样会作为普通文本释放。
-- 解析层不会因为参数值为空而丢弃工具调用；显式空字符串或纯空白参数会按空字符串进入结构化 `tool_calls`。Prompt 会要求模型不要主动输出空参数，缺参/空命令的拒绝应由工具执行侧或客户端 schema 校验负责。
-- 当最终可见正文为空但思维链里包含可执行工具调用时，Chat / Responses 会在收尾阶段补发标准 OpenAI `tool_calls` / `function_call` 输出；如果客户端未开启 thinking / reasoning，该思维链只用于检测，不会作为可见正文或 `reasoning_content` 暴露。
-- Markdown fenced code block（例如 ```json ... ```）和行内 code span（例如 `` `<tool_calls>...</tool_calls>` ``）中的 `tool_calls` 仅视为示例文本，不会被执行。
+工具调用已整体移除。请求中的 `tools` 会被接受但忽略，DS2API 不再解析或产出 `tool_calls`：`finish_reason` 始终为 `stop`，模型输出（即使看起来像 `<tool_calls>` / `<|DSML|...>`）都作为普通文本放在 `message.content`。如需工具/Agent 能力，请在客户端侧自行解析模型文本并执行。
 
 ---
 
@@ -377,11 +340,10 @@ OpenAI Responses 风格接口，兼容 `input` 或 `messages`。
 | `messages` | array | ❌ | 与 `input` 二选一 |
 | `instructions` | string | ❌ | 自动前置为 system 消息 |
 | `stream` | boolean | ❌ | 默认 `false` |
-| `tools` | array | ❌ | 与 chat 同样的工具识别与转译策略（含代码块示例豁免） |
-| `tool_choice` | string/object | ❌ | 支持 `auto`/`none`/`required` 与强制函数（`{"type":"function","name":"..."}`） |
+| `tools` | array | ❌ | 接受但忽略（工具调用已移除） |
+| `tool_choice` | string/object | ❌ | 接受但忽略（工具调用已移除） |
 
 **非流式响应**：返回标准 `response` 对象，`id` 形如 `resp_xxx`，并写入内存 TTL 存储。
-当 `tool_choice=required` 且未产出有效工具调用时，返回 HTTP `422`（`error.code=tool_choice_violation`）。
 
 **流式响应（SSE）**：最小事件序列如下。
 
@@ -509,7 +471,7 @@ anthropic-version: 2023-06-01
 | `max_tokens` | number | ❌ | 缺省自动补 `8192`；当前实现不会硬性截断上游输出 |
 | `stream` | boolean | ❌ | 默认 `false` |
 | `system` | string | ❌ | 可选系统提示 |
-| `tools` | array | ❌ | Claude tool 定义 |
+| `tools` | array | ❌ | 接受但忽略（工具调用已移除） |
 | `thinking` | object | ❌ | Anthropic thinking 配置；会转译为下游 reasoning 控制，`-nothinking` 模型会忽略 |
 | `temperature` | number | ❌ | 透传到下游；若同时提供 `top_p`，以 `temperature` 为准 |
 | `top_p` | number | ❌ | 当未提供 `temperature` 时透传到下游 |
@@ -539,6 +501,8 @@ anthropic-version: 2023-06-01
 ```
 
 若识别到工具调用，`stop_reason=tool_use`，`content` 中返回 `tool_use` block。
+
+> 注意：工具调用已移除。`tools` 字段被接受但忽略，`stop_reason` 始终为 `end_turn`，不会返回 `tool_use` block。
 
 #### 流式响应（`stream=true`）
 
@@ -617,7 +581,6 @@ data: {"type":"message_stop"}
 
 - `candidates[].content.parts[].text`
 - `candidates[].content.parts[].thought=true`（thinking 输出）
-- `candidates[].content.parts[].functionCall`（工具调用时）
 - `usageMetadata`（`promptTokenCount` / `candidatesTokenCount` / `totalTokenCount`）
 
 ### `POST /v1beta/models/{model}:streamGenerateContent`
@@ -626,7 +589,6 @@ data: {"type":"message_stop"}
 
 - 常规文本：持续返回增量文本 chunk
 - thinking：持续返回 `parts[].thought=true` 的增量 chunk
-- `tools` 场景：会缓冲并在结束时输出 `functionCall` 结构
 - 结束 chunk：包含 `finishReason: "STOP"` 与 `usageMetadata`
 - token 计数优先透传上游 DeepSeek SSE（如 `accumulated_token_usage` / `token_usage`）；仅在上游缺失时回退本地估算
 
@@ -1342,7 +1304,9 @@ curl http://localhost:5001/v1/chat/completions \
   }'
 ```
 
-### OpenAI Tool Calling
+### OpenAI Tool Calling（已移除）
+
+> 工具调用已移除：以下请求仍可发送（`tools` 字段被接受），但会被忽略，模型按普通对话文本回复，不会返回 `tool_calls`。
 
 ```bash
 curl http://localhost:5001/v1/chat/completions \
