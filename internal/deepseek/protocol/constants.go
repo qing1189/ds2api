@@ -24,15 +24,29 @@ const (
 	DeepSeekUploadTargetPath     = "/api/v0/file/upload_file"
 )
 
-// defaultStaticBaseHeaders are the headers that real DeepSeek Android clients
-// (OkHttp-based) consistently send. We deliberately omit "accept-charset"
-// because modern Android OkHttp does not send it, and including it makes the
-// request look like a Python/curl client.
+// DefaultWebUserAgent is a realistic recent Chrome-on-Windows UA. It is only
+// used for the global BaseHeaders (proxy connectivity test); real per-account
+// request UAs come from BaseHeadersForFingerprint.
+const DefaultWebUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+// defaultStaticBaseHeaders are the headers a real DeepSeek web client (Chrome)
+// consistently sends. We model the browser session of the reference project
+// ds2026530, which is verified to avoid DeepSeek risk control. Per-account
+// fields (User-Agent, sec-ch-ua, Accept-Language, Cookie) are layered on top
+// by BaseHeadersForFingerprint.
 var defaultStaticBaseHeaders = map[string]string{
-	"Host":            "chat.deepseek.com",
-	"Accept":          "application/json",
-	"Content-Type":    "application/json",
-	"Accept-Encoding": "gzip, deflate, br",
+	"Host":                     "chat.deepseek.com",
+	"Accept":                   "*/*",
+	"Content-Type":             "application/json",
+	"Accept-Encoding":          "gzip, deflate, br",
+	"Accept-Language":          "zh-CN,zh;q=0.9",
+	"Origin":                   "https://chat.deepseek.com",
+	"Referer":                  "https://chat.deepseek.com/",
+	"sec-ch-ua-mobile":         "?0",
+	"sec-fetch-dest":           "empty",
+	"sec-fetch-mode":           "cors",
+	"sec-fetch-site":           "same-origin",
+	"x-client-timezone-offset": "28800",
 }
 
 var defaultSkipContainsPatterns = []string{
@@ -100,10 +114,13 @@ func normalizeClientConstants(in clientConstants) clientConstants {
 		in.Name = "DeepSeek"
 	}
 	if in.Platform == "" {
-		in.Platform = "android"
+		in.Platform = "web"
 	}
 	if in.AndroidAPILevel == "" {
 		in.AndroidAPILevel = "35"
+	}
+	if in.Version == "" {
+		in.Version = "2.0.0"
 	}
 	if in.Locale == "" {
 		in.Locale = "zh_CN"
@@ -119,12 +136,24 @@ func buildBaseHeaders(client clientConstants, overrides map[string]string) map[s
 		}
 		out[k] = v
 	}
-	if client.Name != "" && client.Version != "" {
-		userAgent := client.Name + "/" + client.Version
-		if client.Platform == "android" && client.AndroidAPILevel != "" {
-			userAgent += " Android/" + client.AndroidAPILevel
+	if client.Platform == "android" {
+		// Legacy Android UA path, retained for completeness / tests.
+		if client.Name != "" && client.Version != "" {
+			userAgent := client.Name + "/" + client.Version
+			if client.AndroidAPILevel != "" {
+				userAgent += " Android/" + client.AndroidAPILevel
+			}
+			out["User-Agent"] = userAgent
 		}
-		out["User-Agent"] = userAgent
+	} else {
+		// Web client: present a real browser UA. Honor an explicit override if
+		// supplied, otherwise fall back to a recent Chrome desktop UA.
+		if ua := strings.TrimSpace(out["User-Agent"]); ua == "" {
+			out["User-Agent"] = DefaultWebUserAgent
+		}
+		if client.Version != "" {
+			out["x-app-version"] = client.Version
+		}
 	}
 	if client.Platform != "" {
 		out["x-client-platform"] = client.Platform
@@ -138,77 +167,57 @@ func buildBaseHeaders(client clientConstants, overrides map[string]string) map[s
 	return out
 }
 
-// uaVariants is kept for backwards compatibility with any callers that need a
-// quick rotation pool independent from a specific account. New code should
-// prefer BaseHeadersForFingerprint, which gives each account a stable identity.
-var uaVariants = func() []string {
-	platforms := []string{"android"}
-	locales := []string{"zh_CN", "en_US", "zh_TW"}
-	uaCombos := []struct {
-		name  string
-		ver   string
-		apiLv string
-	}{
-		{"DeepSeek", "2.0.4", "35"}, // 基线版本
-		{"DeepSeek", "2.0.3", "34"},
-		{"DeepSeek", "2.1.0", "35"},
-		{"DeepSeek", "2.1.1", "35"},
-		{"DeepSeek", "2.0.5", "34"},
-		{"DeepSeek", "2.2.0", "36"},
-	}
-	seen := map[string]bool{}
-	var result []string
-	for _, combo := range uaCombos {
-		for _, plat := range platforms {
-			for _, loc := range locales {
-				ua := combo.name + "/" + combo.ver + " Android/" + combo.apiLv
-				key := ua + "|" + plat + "|" + loc
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				result = append(result, ua+"|"+plat+"|"+loc+"|"+combo.ver)
-			}
-		}
-	}
-	return result
-}()
+// webUAVariants is a small pool of realistic Chrome desktop User-Agents kept
+// for the legacy RandomBaseHeaders helper. New code should prefer
+// BaseHeadersForFingerprint, which gives each account a stable browser
+// identity instead of rotating per request (which is itself a signal).
+var webUAVariants = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+}
 
-// RandomBaseHeaders returns headers with a random User-Agent picked from the
-// shared pool. This is kept for backwards compatibility; new call sites
-// should use BaseHeadersForFingerprint(accountID) so each account presents a
-// stable identity rather than rotating per request (which itself is a
-// suspicious signal).
+// RandomBaseHeaders returns headers with a random Chrome User-Agent picked
+// from the shared pool. This is kept for backwards compatibility; new call
+// sites should use BaseHeadersForFingerprint(accountID) so each account
+// presents a stable identity rather than rotating per request (which itself
+// is a suspicious signal).
 func RandomBaseHeaders() map[string]string {
 	out := cloneStringMap(defaultStaticBaseHeaders)
-	variant := uaVariants[rand.Intn(len(uaVariants))]
-	parts := strings.Split(variant, "|")
-	if len(parts) == 4 {
-		out["User-Agent"] = parts[0]
-		out["x-client-platform"] = parts[1]
-		out["x-client-locale"] = parts[2]
-		out["x-client-version"] = parts[3]
-	}
+	out["User-Agent"] = webUAVariants[rand.Intn(len(webUAVariants))]
+	out["x-client-platform"] = "web"
+	out["x-client-version"] = webClientVersion
+	out["x-app-version"] = webClientVersion
+	out["x-client-locale"] = "zh_CN"
 	return out
 }
 
 // BaseHeadersForFingerprint builds a fresh header map keyed to the given
 // account fingerprint. The same accountID always produces the same UA,
-// locale, x-app-build and x-device-id so DeepSeek-side risk control sees a
-// consistent device per account, instead of values shuffling on every request.
+// sec-ch-ua, locale, cookie jar and device id so DeepSeek-side risk control
+// sees a consistent browser per account, instead of values shuffling on every
+// request.
 //
 // Callers must still set Authorization themselves; this function only fills
-// in the device-identity surface (User-Agent, locale, build, device id, etc).
+// in the browser-identity surface (User-Agent, sec-ch-ua, locale, cookie, ...).
 func BaseHeadersForFingerprint(fp AccountFingerprint) map[string]string {
 	out := cloneStringMap(defaultStaticBaseHeaders)
 	if fp.UserAgent != "" {
 		out["User-Agent"] = fp.UserAgent
 	}
-	if fp.Platform != "" {
-		out["x-client-platform"] = fp.Platform
+	platform := fp.Platform
+	if platform == "" {
+		platform = "web"
 	}
-	if fp.Version != "" {
-		out["x-client-version"] = fp.Version
+	out["x-client-platform"] = platform
+	version := fp.Version
+	if version == "" {
+		version = ClientVersion
+	}
+	if version != "" {
+		out["x-client-version"] = version
+		out["x-app-version"] = version
 	}
 	if fp.Locale != "" {
 		out["x-client-locale"] = fp.Locale
@@ -216,14 +225,17 @@ func BaseHeadersForFingerprint(fp AccountFingerprint) map[string]string {
 	if fp.AcceptLang != "" {
 		out["Accept-Language"] = fp.AcceptLang
 	}
-	if fp.BuildNumber != "" {
-		out["x-app-build"] = fp.BuildNumber
+	if fp.SecChUa != "" {
+		out["sec-ch-ua"] = fp.SecChUa
 	}
-	if fp.APILevel != "" {
-		out["x-os-version"] = fp.APILevel
+	if fp.SecChUaMobile != "" {
+		out["sec-ch-ua-mobile"] = fp.SecChUaMobile
 	}
-	if fp.DeviceID != "" {
-		out["x-device-id"] = fp.DeviceID
+	if fp.SecChUaPlatform != "" {
+		out["sec-ch-ua-platform"] = fp.SecChUaPlatform
+	}
+	if fp.Cookie != "" {
+		out["Cookie"] = fp.Cookie
 	}
 	return out
 }

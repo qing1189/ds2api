@@ -47,6 +47,11 @@ type Client struct {
 	sessionCacheMu sync.Mutex
 	sessionTTL     time.Duration
 	sessionTTLOnce sync.Once
+
+	// hifCache stores the DeepSeek web anti-bot tokens (x-hif-leim /
+	// x-hif-dliq) per upstream token, with a TTL-based expiry.
+	hifCache map[string]hifEntry
+	hifMu    sync.Mutex
 }
 
 func NewClient(store *config.Store, resolver *auth.Resolver) *Client {
@@ -60,6 +65,7 @@ func NewClient(store *config.Store, resolver *auth.Resolver) *Client {
 		fallbackS:    &http.Client{Timeout: 0},
 		maxRetries:   3,
 		proxyClients: map[string]requestClients{},
+		hifCache:     map[string]hifEntry{},
 	}
 }
 

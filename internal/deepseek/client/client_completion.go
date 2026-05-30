@@ -18,6 +18,8 @@ func (c *Client) CallCompletion(ctx context.Context, a *auth.RequestAuth, payloa
 	clients := c.requestClientsForAuth(ctx, a)
 	headers := c.authHeadersForAuth(a)
 	headers["x-ds-pow-response"] = powResp
+	headers["Accept"] = "text/event-stream"
+	c.injectHIFHeaders(ctx, a, headers)
 	captureSession := c.capture.Start("deepseek_completion", dsprotocol.DeepSeekCompletionURL, a.AccountID, payload)
 	resp, err := c.streamPostOnce(ctx, clients.stream, dsprotocol.DeepSeekCompletionURL, headers, payload)
 	if err != nil {
