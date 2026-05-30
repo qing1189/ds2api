@@ -719,3 +719,28 @@ func TestClaudeModelsResponse(t *testing.T) {
 		t.Fatal("expected non-empty models list")
 	}
 }
+
+// ─── ModelSupportsContextFileUpload ──────────────────────────────────
+
+func TestModelSupportsContextFileUpload(t *testing.T) {
+	cases := []struct {
+		model string
+		want  bool
+	}{
+		// Only the vision model uploads a context file; everything else inlines.
+		{"deepseek-v4-vision", true},
+		{"deepseek-v4-flash", false},
+		{"deepseek-v4-flash-search", false},
+		{"deepseek-v4-flash-nothinking", false},
+		{"deepseek-v4-pro", false},
+		{"deepseek-v4-pro-search", false},
+		{"deepseek-v4-pro-nothinking", false},
+		{"deepseek-v4-pro-search-nothinking", false},
+		{"some-unmapped-model", false},
+	}
+	for _, tc := range cases {
+		if got := ModelSupportsContextFileUpload(tc.model); got != tc.want {
+			t.Fatalf("ModelSupportsContextFileUpload(%q)=%v want %v", tc.model, got, tc.want)
+		}
+	}
+}

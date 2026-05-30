@@ -194,9 +194,9 @@ func TestExecuteNonStreamWithRetryReuploadsCurrentInputFileAfterAccountSwitch(t 
 	}
 	stdReq := promptcompat.StandardRequest{
 		Surface:        "test",
-		RequestedModel: "deepseek-v4-flash",
-		ResolvedModel:  "deepseek-v4-flash",
-		ResponseModel:  "deepseek-v4-flash",
+		RequestedModel: "deepseek-v4-vision",
+		ResolvedModel:  "deepseek-v4-vision",
+		ResponseModel:  "deepseek-v4-vision",
 		Messages: []any{
 			map[string]any{"role": "user", "content": "large current input"},
 		},
@@ -281,9 +281,9 @@ func TestStartCompletionAppliesCurrentInputFileGlobally(t *testing.T) {
 	ds := &fakeDeepSeekCaller{responses: []*http.Response{sseHTTPResponse(http.StatusOK, `data: {"p":"response/content","v":"ok"}`)}}
 	stdReq := promptcompat.StandardRequest{
 		Surface:         "test_adapter",
-		RequestedModel:  "deepseek-v4-flash",
-		ResolvedModel:   "deepseek-v4-flash",
-		ResponseModel:   "deepseek-v4-flash",
+		RequestedModel:  "deepseek-v4-vision",
+		ResolvedModel:   "deepseek-v4-vision",
+		ResponseModel:   "deepseek-v4-vision",
 		PromptTokenText: "first user turn",
 		FinalPrompt:     "first user turn",
 		Messages: []any{

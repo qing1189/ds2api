@@ -113,6 +113,19 @@ func GetModelType(model string) (modelType string, ok bool) {
 	}
 }
 
+// ModelSupportsContextFileUpload reports whether the resolved DeepSeek model
+// uses an uploaded context file (DS2API_HISTORY.txt) instead of an inline
+// conversation prompt.
+//
+// Only the multimodal "vision" model uses uploaded context files. All other
+// models (flash / "default" and pro / "expert", plus any unmapped model) send
+// the conversation inline, because the DeepSeek web backend does not reliably
+// accept text context-file attachments for those modes.
+func ModelSupportsContextFileUpload(model string) bool {
+	modelType, ok := GetModelType(model)
+	return ok && modelType == "vision"
+}
+
 func IsSupportedDeepSeekModel(model string) bool {
 	_, _, ok := GetModelConfig(model)
 	return ok

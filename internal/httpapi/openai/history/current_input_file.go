@@ -37,6 +37,12 @@ func (s Service) ApplyCurrentInputFile(ctx context.Context, a *auth.RequestAuth,
 	if stdReq.CurrentInputFileApplied || s.DS == nil || s.Store == nil || a == nil || !s.Store.CurrentInputFileEnabled() {
 		return stdReq, nil
 	}
+	// Only the vision model uses uploaded context files. For all other models
+	// (flash, pro, etc.) send the conversation inline instead of uploading
+	// DS2API_HISTORY.txt as an attachment.
+	if !config.ModelSupportsContextFileUpload(stdReq.ResolvedModel) {
+		return stdReq, nil
+	}
 	threshold := s.Store.CurrentInputFileMinChars()
 
 	index, text := latestUserInputForFile(stdReq.Messages)

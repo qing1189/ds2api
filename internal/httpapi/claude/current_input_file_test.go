@@ -113,7 +113,7 @@ func TestClaudeDirectAppliesCurrentInputFile(t *testing.T) {
 	ds := &claudeCurrentInputDS{}
 	historyStore := chathistory.New(filepath.Join(t.TempDir(), "history.json"))
 	h := &Handler{
-		Store:       mockClaudeConfig{aliases: map[string]string{"claude-sonnet-4-6": "deepseek-v4-flash"}},
+		Store:       mockClaudeConfig{aliases: map[string]string{"claude-sonnet-4-6": "deepseek-v4-vision"}},
 		Auth:        claudeCurrentInputAuth{},
 		DS:          ds,
 		ChatHistory: historyStore,
