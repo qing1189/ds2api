@@ -107,7 +107,7 @@ func TestHandleVercelStreamPrepareAppliesCurrentInputFile(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]any{
-		"model":    "deepseek-v4-flash",
+		"model":    "deepseek-v4-vision",
 		"messages": historySplitTestMessages(),
 		"stream":   true,
 	})
