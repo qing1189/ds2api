@@ -14,18 +14,23 @@ func TestSharedConstantsLoaded(t *testing.T) {
 	if ClientVersion != client.Version {
 		t.Fatalf("unexpected client version=%q", ClientVersion)
 	}
-	wantUserAgent := client.Name + "/" + client.Version + " Android/" + client.AndroidAPILevel
-	if BaseHeaders["User-Agent"] != wantUserAgent {
+	if BaseHeaders["User-Agent"] != DefaultWebUserAgent {
 		t.Fatalf("unexpected user agent=%q", BaseHeaders["User-Agent"])
 	}
-	if BaseHeaders["x-client-platform"] != "android" {
+	if BaseHeaders["x-client-platform"] != "web" {
 		t.Fatalf("unexpected base header x-client-platform=%q", BaseHeaders["x-client-platform"])
 	}
 	if BaseHeaders["x-client-version"] != ClientVersion {
 		t.Fatalf("unexpected base header x-client-version=%q", BaseHeaders["x-client-version"])
 	}
+	if BaseHeaders["x-app-version"] != ClientVersion {
+		t.Fatalf("unexpected base header x-app-version=%q", BaseHeaders["x-app-version"])
+	}
 	if BaseHeaders["Content-Type"] != "application/json" {
 		t.Fatalf("unexpected base header Content-Type=%q", BaseHeaders["Content-Type"])
+	}
+	if BaseHeaders["Origin"] != "https://chat.deepseek.com" {
+		t.Fatalf("unexpected base header Origin=%q", BaseHeaders["Origin"])
 	}
 	if len(SkipContainsPatterns) == 0 {
 		t.Fatal("expected skip contains patterns to be loaded")

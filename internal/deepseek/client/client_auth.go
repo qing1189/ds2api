@@ -5,7 +5,6 @@ import (
 	dsprotocol "ds2api/internal/deepseek/protocol"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"strings"
 	"unicode"
@@ -17,22 +16,25 @@ import (
 func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) {
 	c.Jitter()
 	clients := c.requestClientsForAccount(acc)
+	fp := dsprotocol.FingerprintForAccount(acc.Identifier())
 	payload := map[string]any{
 		"password":  strings.TrimSpace(acc.Password),
-		"device_id": "deepseek_to_api",
-		"os":        "android",
+		"device_id": loginDeviceID(fp),
+		"os":        "web",
 	}
 	if email := strings.TrimSpace(acc.Email); email != "" {
 		payload["email"] = email
+		payload["mobile"] = ""
+		payload["area_code"] = ""
 	} else if mobile := strings.TrimSpace(acc.Mobile); mobile != "" {
 		loginMobile, areaCode := normalizeMobileForLogin(mobile)
 		payload["mobile"] = loginMobile
 		payload["area_code"] = areaCode
+		payload["email"] = ""
 	} else {
 		return "", errors.New("missing email/mobile")
 	}
-	loginHeaders := dsprotocol.BaseHeadersForFingerprint(dsprotocol.FingerprintForAccount(acc.Identifier()))
-	loginHeaders["x-trace-id"] = newTraceID()
+	loginHeaders := dsprotocol.BaseHeadersForFingerprint(fp)
 	resp, err := c.postJSON(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekLoginURL, loginHeaders, payload)
 	if err != nil {
 		return "", err
@@ -69,7 +71,8 @@ func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAtte
 	refreshed := false
 	for attempts < maxAttempts {
 		headers := c.authHeadersForAuth(a)
-		resp, status, err := c.postJSONWithStatus(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekCreateSessionURL, headers, map[string]any{"agent": "chat"})
+		c.injectHIFHeaders(ctx, a, headers)
+		resp, status, err := c.postJSONWithStatus(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekCreateSessionURL, headers, map[string]any{})
 		if err != nil {
 			config.Logger.Warn("[create_session] request error", "error", err, "account", a.AccountID)
 			attempts++
@@ -124,6 +127,7 @@ func (c *Client) GetPowForTarget(ctx context.Context, a *auth.RequestAuth, targe
 	lastFailureMessage := ""
 	for attempts < maxAttempts {
 		headers := c.authHeadersForAuth(a)
+		c.injectHIFHeaders(ctx, a, headers)
 		resp, status, err := c.postJSONWithStatus(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekCreatePowURL, headers, map[string]any{"target_path": targetPath})
 		if err != nil {
 			config.Logger.Warn("[get_pow] request error", "error", err, "account", a.AccountID, "target_path", targetPath)
@@ -187,37 +191,30 @@ func (c *Client) authHeadersForAuth(a *auth.RequestAuth) map[string]string {
 }
 
 // authHeadersForFingerprint composes the full DeepSeek request header set:
-//   - device-stable fingerprint (UA, locale, build, device id)
-//   - per-request x-trace-id so server-side logs can correlate requests but
-//     the value rotates each call (real clients also rotate trace-ids).
+//   - browser-stable fingerprint (UA, sec-ch-ua, locale, cookie jar)
 //   - Bearer authorization when a token is supplied.
+//
+// HIF anti-bot tokens (x-hif-leim / x-hif-dliq) are injected separately by the
+// callers that hit the chat / session / pow / completion endpoints, because
+// fetching them requires a context and the upstream token.
 func (c *Client) authHeadersForFingerprint(token, accountID string) map[string]string {
 	fp := dsprotocol.FingerprintForAccount(accountID)
 	headers := dsprotocol.BaseHeadersForFingerprint(fp)
-	headers["x-trace-id"] = newTraceID()
 	if t := strings.TrimSpace(token); t != "" {
 		headers["authorization"] = "Bearer " + t
 	}
 	return headers
 }
 
-// newTraceID returns a UUIDv4-style identifier without hyphens, matching the
-// shape DeepSeek's Android client appears to use for x-trace-id. We use
-// math/rand because the value only needs to be unique per request, not
-// cryptographically random.
-func newTraceID() string {
-	b := make([]byte, 16)
-	rand.Read(b) //nolint:gosec
-	// RFC 4122 variant + version bits, mostly cosmetic for our purposes.
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	const hex = "0123456789abcdef"
-	out := make([]byte, 32)
-	for i, v := range b {
-		out[i*2] = hex[v>>4]
-		out[i*2+1] = hex[v&0x0f]
+// loginDeviceID returns the device_id sent at login time. The reference web
+// client derives it from a 48-byte base64 blob prefixed with "B"; we reuse the
+// account's stable web device id so the same account always logs in with the
+// same device.
+func loginDeviceID(fp dsprotocol.AccountFingerprint) string {
+	if strings.TrimSpace(fp.DeviceID) == "" {
+		return "deepseek_to_api"
 	}
-	return string(out)
+	return "B" + fp.DeviceID
 }
 
 func isTokenInvalid(status int, code int, bizCode int, msg string, bizMsg string) bool {
