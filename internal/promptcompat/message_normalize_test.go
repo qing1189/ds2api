@@ -33,24 +33,20 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantToolCallsAndToolResult(t *tes
 		},
 	}
 
+	// Tool calling removed: the assistant tool_call-only turn carries no visible
+	// content, so it is dropped; the tool result is still forwarded as plain
+	// history and no DSML markup is emitted.
 	normalized := NormalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 4 {
-		t.Fatalf("expected 4 normalized messages with assistant tool history preserved, got %d", len(normalized))
+	if len(normalized) != 3 {
+		t.Fatalf("expected 3 normalized messages (assistant tool-only turn dropped), got %d: %#v", len(normalized), normalized)
 	}
-	assistantContent, _ := normalized[2]["content"].(string)
-	if !strings.Contains(assistantContent, "<|DSML|tool_calls>") {
-		t.Fatalf("assistant tool history should be preserved in DSML form, got %q", assistantContent)
-	}
-	if !strings.Contains(assistantContent, `<|DSML|invoke name="get_weather">`) {
-		t.Fatalf("expected tool name in preserved history, got %q", assistantContent)
-	}
-	if !strings.Contains(normalized[3]["content"].(string), `"temp":18`) {
-		t.Fatalf("tool result should be transparently forwarded, got %#v", normalized[3]["content"])
+	if !strings.Contains(normalized[2]["content"].(string), `"temp":18`) {
+		t.Fatalf("tool result should be transparently forwarded, got %#v", normalized[2]["content"])
 	}
 
 	prompt := util.MessagesPrepare(normalized)
-	if !strings.Contains(prompt, "<|DSML|tool_calls>") {
-		t.Fatalf("expected preserved assistant tool history in prompt: %q", prompt)
+	if strings.Contains(prompt, "DSML") {
+		t.Fatalf("prompt must not contain any DSML markup, got: %q", prompt)
 	}
 }
 
@@ -147,7 +143,7 @@ func TestNormalizeOpenAIMessagesForPrompt_EmptyToolContentPreservedAsNull(t *tes
 	}
 }
 
-func TestNormalizeOpenAIMessagesForPrompt_AssistantMultipleToolCallsRemainSeparated(t *testing.T) {
+func TestNormalizeOpenAIMessagesForPrompt_AssistantMultipleToolCallsDropped(t *testing.T) {
 	raw := []any{
 		map[string]any{
 			"role": "assistant",
@@ -172,23 +168,19 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantMultipleToolCallsRemainSepara
 		},
 	}
 
+	// Tool calling removed: an assistant turn with only tool_calls (no visible
+	// content) is dropped and never serialized to DSML history.
 	normalized := NormalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 1 {
-		t.Fatalf("expected assistant tool_call-only message preserved, got %#v", normalized)
-	}
-	content, _ := normalized[0]["content"].(string)
-	if strings.Count(content, "<|DSML|invoke name=") != 2 {
-		t.Fatalf("expected two preserved tool call blocks, got %q", content)
-	}
-	if !strings.Contains(content, `<|DSML|invoke name="search_web">`) || !strings.Contains(content, `<|DSML|invoke name="eval_javascript">`) {
-		t.Fatalf("expected both tool names in preserved history, got %q", content)
+	if len(normalized) != 0 {
+		t.Fatalf("expected assistant tool_call-only message to be dropped, got %#v", normalized)
 	}
 }
 
-func TestNormalizeOpenAIMessagesForPrompt_PreservesConcatenatedToolArguments(t *testing.T) {
+func TestNormalizeOpenAIMessagesForPrompt_AssistantToolCallsWithTextKeepOnlyText(t *testing.T) {
 	raw := []any{
 		map[string]any{
-			"role": "assistant",
+			"role":    "assistant",
+			"content": "好的，我来查一下",
 			"tool_calls": []any{
 				map[string]any{
 					"id": "call_1",
@@ -201,13 +193,18 @@ func TestNormalizeOpenAIMessagesForPrompt_PreservesConcatenatedToolArguments(t *
 		},
 	}
 
+	// Visible assistant text is preserved; the tool_calls are dropped and no
+	// DSML markup is emitted.
 	normalized := NormalizeOpenAIMessagesForPrompt(raw, "")
 	if len(normalized) != 1 {
-		t.Fatalf("expected assistant tool_call-only content preserved, got %#v", normalized)
+		t.Fatalf("expected assistant message with visible text preserved, got %#v", normalized)
 	}
 	content, _ := normalized[0]["content"].(string)
-	if !strings.Contains(content, `{}{"query":"测试工具调用"}`) {
-		t.Fatalf("expected concatenated tool arguments preserved, got %q", content)
+	if content != "好的，我来查一下" {
+		t.Fatalf("expected only visible text preserved, got %q", content)
+	}
+	if strings.Contains(content, "DSML") || strings.Contains(content, "测试工具调用") {
+		t.Fatalf("tool_calls history must not leak into prompt, got %q", content)
 	}
 }
 
@@ -233,7 +230,7 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantToolCallsMissingNameAreDroppe
 	}
 }
 
-func TestNormalizeOpenAIMessagesForPrompt_AssistantNilContentDoesNotInjectNullLiteral(t *testing.T) {
+func TestNormalizeOpenAIMessagesForPrompt_AssistantNilContentToolCallsDropped(t *testing.T) {
 	raw := []any{
 		map[string]any{
 			"role":    "assistant",
@@ -250,52 +247,11 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantNilContentDoesNotInjectNullLi
 		},
 	}
 
+	// Tool calling removed: nil-content assistant tool-call turn is dropped
+	// entirely (no null literal, no DSML history).
 	normalized := NormalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 1 {
-		t.Fatalf("expected nil-content assistant tool_call-only message preserved, got %#v", normalized)
-	}
-	content, _ := normalized[0]["content"].(string)
-	if strings.Contains(content, "null") {
-		t.Fatalf("expected no null literal injection, got %q", content)
-	}
-	if !strings.Contains(content, "<|DSML|tool_calls>") {
-		t.Fatalf("expected assistant tool history in normalized content, got %q", content)
-	}
-}
-
-func TestNormalizeOpenAIMessagesForPrompt_CanonicalizesStandaloneAssistantToolMarkupContent(t *testing.T) {
-	raw := []any{
-		map[string]any{
-			"role": "assistant",
-			"content": `<！DSML！tool_calls>
-  <！DSML！invoke name=“Bash”>
-  <！DSML！parameter name=“command”><！[CDATA[lsof -i :4321 -t]]><！/DSML！parameter>
-  <！DSML！parameter name=“description”><！[CDATA[Verify port 4321 is free]]><！/DSML！parameter>
-  <！/DSML！invoke>
-  <！/DSML！tool_calls>`,
-		},
-	}
-
-	normalized := NormalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 1 {
-		t.Fatalf("expected one normalized assistant message, got %#v", normalized)
-	}
-	content, _ := normalized[0]["content"].(string)
-	for _, want := range []string{
-		"<|DSML|tool_calls>",
-		`<|DSML|invoke name="Bash">`,
-		`<|DSML|parameter name="command"><![CDATA[lsof -i :4321 -t]]></|DSML|parameter>`,
-		`<|DSML|parameter name="description"><![CDATA[Verify port 4321 is free]]></|DSML|parameter>`,
-		"</|DSML|tool_calls>",
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("expected canonicalized assistant tool markup to contain %q, got %q", want, content)
-		}
-	}
-	for _, bad := range []string{"<！DSML", "！tool_calls", "“", "”"} {
-		if strings.Contains(content, bad) {
-			t.Fatalf("expected malformed assistant tool markup to be removed from prompt history, found %q in %q", bad, content)
-		}
+	if len(normalized) != 0 {
+		t.Fatalf("expected nil-content assistant tool_call-only message to be dropped, got %#v", normalized)
 	}
 }
 

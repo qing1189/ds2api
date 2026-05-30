@@ -202,35 +202,11 @@ go test ./...
 ### 运行特定模块的单元测试
 
 ```bash
-# 运行 tool calls 相关测试（推荐用于调试 tool call 解析问题）
-go test -v -run 'TestParseToolCalls|TestProcessToolSieve|TestRepair' ./internal/toolcall ./internal/toolstream
-
-# 运行单个测试用例
-go test -v -run TestParseToolCallsAllowsAllEmptyParameterPayload ./internal/toolcall
-
 # 运行 format 相关测试
 go test -v ./internal/format/...
 
 # 运行 HTTP API 相关测试
 go test -v ./internal/httpapi/openai/...
-```
-
-### 调试 Tool Call 问题 | Debugging Tool Call Issues
-
-当遇到 DeepSeek 工具调用解析问题时，可以使用以下方法：
-
-```bash
-# 1. 运行 tool calls 相关的所有测试
-go test -v -run 'TestParseToolCalls|TestProcessToolSieve|TestRepair' ./internal/toolcall ./internal/toolstream
-
-# 2. 查看测试输出中的详细调试信息
-go test -v -run TestProcessToolSieveReleasesMalformedExecutableXMLBlock ./internal/toolstream 2>&1
-
-# 3. 检查具体测试用例的修复效果
-# 重点测试位于 internal/toolcall/toolcalls_test.go 与 internal/toolstream/tool_sieve_xml_test.go，包含：
-# - TestParseToolCallsAllowsAllEmptyParameterPayload: 空参数结构化保留
-# - TestProcessToolSieveReleasesMalformedExecutableXMLBlock: malformed XML wrapper 释放为文本
-# - TestRepairLooseJSONWithNestedObjects: 嵌套对象的方括号修复
 ```
 
 ### 运行 Node.js 测试

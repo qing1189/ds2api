@@ -14,7 +14,6 @@
 
 - [DS2API 项目价值说明](./project-value.md)
 - [API -> 网页对话纯文本兼容主链路说明](./prompt-compatibility.md)
-- [Tool Calling 统一语义](./toolcall-semantics.md)
 - [DeepSeek SSE 行为结构说明（逆向观察）](./DeepSeekSSE行为结构说明-2026-04-05.md)
 
 ## 文档维护约定

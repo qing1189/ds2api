@@ -11,7 +11,6 @@ import (
 	"ds2api/internal/promptcompat"
 	"ds2api/internal/sse"
 	streamengine "ds2api/internal/stream"
-	"ds2api/internal/toolstream"
 )
 
 type chatStreamRuntime struct {
@@ -32,15 +31,7 @@ type chatStreamRuntime struct {
 	searchEnabled         bool
 	stripReferenceMarkers bool
 
-	firstChunkSent       bool
-	bufferToolContent    bool
-	emitEarlyToolDeltas  bool
-	toolCallsEmitted     bool
-	toolCallsDoneEmitted bool
-
-	toolSieve         toolstream.State
-	streamToolCallIDs map[int]string
-	streamToolNames   map[int]string
+	firstChunkSent    bool
 	accumulator       shared.StreamAccumulator
 	responseMessageID int
 
@@ -93,8 +84,6 @@ func newChatStreamRuntime(
 	toolNames []string,
 	toolsRaw any,
 	toolChoice promptcompat.ToolChoicePolicy,
-	bufferToolContent bool,
-	emitEarlyToolDeltas bool,
 ) *chatStreamRuntime {
 	return &chatStreamRuntime{
 		w:                     w,
@@ -110,10 +99,6 @@ func newChatStreamRuntime(
 		thinkingEnabled:       thinkingEnabled,
 		searchEnabled:         searchEnabled,
 		stripReferenceMarkers: stripReferenceMarkers,
-		bufferToolContent:     bufferToolContent,
-		emitEarlyToolDeltas:   emitEarlyToolDeltas,
-		streamToolCallIDs:     map[int]string{},
-		streamToolNames:       map[int]string{},
 		accumulator: shared.StreamAccumulator{
 			ThinkingEnabled:       thinkingEnabled,
 			SearchEnabled:         searchEnabled,
@@ -207,11 +192,6 @@ func (s *chatStreamRuntime) historyThinking() string {
 	)
 }
 
-func (s *chatStreamRuntime) resetStreamToolCallState() {
-	s.streamToolCallIDs = map[int]string{}
-	s.streamToolNames = map[int]string{}
-}
-
 func (s *chatStreamRuntime) finalize(finishReason string, deferEmptyOutput bool) bool {
 	s.finalErrorStatus = 0
 	s.finalErrorMessage = ""
@@ -220,15 +200,13 @@ func (s *chatStreamRuntime) finalize(finishReason string, deferEmptyOutput bool)
 	finalToolDetectionThinking := s.accumulator.ToolDetectionThinking.String()
 	finalText := s.accumulator.Text.String()
 	turn := assistantturn.BuildTurnFromStreamSnapshot(assistantturn.StreamSnapshot{
-		RawText:               s.accumulator.RawText.String(),
-		VisibleText:           finalText,
-		RawThinking:           s.accumulator.RawThinking.String(),
-		VisibleThinking:       finalThinking,
-		DetectionThinking:     finalToolDetectionThinking,
-		ContentFilter:         finishReason == "content_filter",
-		ResponseMessageID:     s.responseMessageID,
-		AlreadyEmittedCalls:   s.toolCallsEmitted,
-		AlreadyEmittedToolRaw: s.toolCallsDoneEmitted,
+		RawText:           s.accumulator.RawText.String(),
+		VisibleText:       finalText,
+		RawThinking:       s.accumulator.RawThinking.String(),
+		VisibleThinking:   finalThinking,
+		DetectionThinking: finalToolDetectionThinking,
+		ContentFilter:     finishReason == "content_filter",
+		ResponseMessageID: s.responseMessageID,
 	}, assistantturn.BuildOptions{
 		Model:                 s.model,
 		Prompt:                s.finalPrompt,
@@ -241,39 +219,8 @@ func (s *chatStreamRuntime) finalize(finishReason string, deferEmptyOutput bool)
 	})
 	s.finalThinking = turn.Thinking
 	s.finalText = turn.Text
-	if len(turn.ToolCalls) > 0 && !s.toolCallsDoneEmitted {
-		s.sendDelta(map[string]any{
-			"tool_calls": formatFinalStreamToolCallsWithStableIDs(turn.ToolCalls, s.streamToolCallIDs, s.toolsRaw),
-		})
-		s.toolCallsEmitted = true
-		s.toolCallsDoneEmitted = true
-	} else if s.bufferToolContent {
-		batch := chatDeltaBatch{runtime: s}
-		for _, evt := range toolstream.Flush(&s.toolSieve, s.toolNames) {
-			if len(evt.ToolCalls) > 0 {
-				batch.flush()
-				s.toolCallsEmitted = true
-				s.toolCallsDoneEmitted = true
-				s.sendDelta(map[string]any{
-					"tool_calls": formatFinalStreamToolCallsWithStableIDs(evt.ToolCalls, s.streamToolCallIDs, s.toolsRaw),
-				})
-				s.resetStreamToolCallState()
-			}
-			if evt.Content == "" {
-				continue
-			}
-			cleaned := cleanVisibleOutput(evt.Content, s.stripReferenceMarkers)
-			if cleaned == "" || (s.searchEnabled && sse.IsCitation(cleaned)) {
-				continue
-			}
-			batch.append("content", cleaned)
-		}
-		batch.flush()
-	}
 
-	outcome := assistantturn.FinalizeTurn(turn, assistantturn.FinalizeOptions{
-		AlreadyEmittedToolCalls: s.toolCallsEmitted || s.toolCallsDoneEmitted,
-	})
+	outcome := assistantturn.FinalizeTurn(turn, assistantturn.FinalizeOptions{})
 	if outcome.ShouldFail {
 		status, message, code := outcome.Error.Status, outcome.Error.Message, outcome.Error.Code
 		if deferEmptyOutput {
@@ -332,51 +279,7 @@ func (s *chatStreamRuntime) onParsed(parsed sse.LineResult) streamengine.ParsedD
 		if p.CitationOnly {
 			continue
 		}
-		if !s.bufferToolContent {
-			batch.append("content", p.VisibleText)
-		} else {
-			events := toolstream.ProcessChunk(&s.toolSieve, p.RawText, s.toolNames)
-			for _, evt := range events {
-				if len(evt.ToolCallDeltas) > 0 {
-					if !s.emitEarlyToolDeltas {
-						continue
-					}
-					filtered := filterIncrementalToolCallDeltasByAllowed(evt.ToolCallDeltas, s.streamToolNames)
-					if len(filtered) == 0 {
-						continue
-					}
-					formatted := formatIncrementalStreamToolCallDeltas(filtered, s.streamToolCallIDs)
-					if len(formatted) == 0 {
-						continue
-					}
-					batch.flush()
-					tcDelta := map[string]any{
-						"tool_calls": formatted,
-					}
-					s.toolCallsEmitted = true
-					s.sendDelta(tcDelta)
-					continue
-				}
-				if len(evt.ToolCalls) > 0 {
-					batch.flush()
-					s.toolCallsEmitted = true
-					s.toolCallsDoneEmitted = true
-					tcDelta := map[string]any{
-						"tool_calls": formatFinalStreamToolCallsWithStableIDs(evt.ToolCalls, s.streamToolCallIDs, s.toolsRaw),
-					}
-					s.sendDelta(tcDelta)
-					s.resetStreamToolCallState()
-					continue
-				}
-				if evt.Content != "" {
-					cleaned := cleanVisibleOutput(evt.Content, s.stripReferenceMarkers)
-					if cleaned == "" || (s.searchEnabled && sse.IsCitation(cleaned)) {
-						continue
-					}
-					batch.append("content", cleaned)
-				}
-			}
-		}
+		batch.append("content", p.VisibleText)
 	}
 	batch.flush()
 	return streamengine.ParsedDecision{ContentSeen: accumulated.ContentSeen}

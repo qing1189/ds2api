@@ -96,7 +96,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.MarkOutcome(true)
-		respBody := openaifmt.BuildChatCompletionWithToolCalls(result.SessionID, stdReq.ResponseModel, result.Turn.Prompt, result.Turn.Thinking, result.Turn.Text, result.Turn.ToolCalls, stdReq.ToolsRaw)
+		respBody := openaifmt.BuildChatCompletion(result.SessionID, stdReq.ResponseModel, result.Turn.Prompt, result.Turn.Thinking, result.Turn.Text, nil, stdReq.ToolsRaw)
 		respBody["usage"] = assistantturn.OpenAIChatUsage(result.Turn)
 		a.MarkUsage(result.Turn.Usage.InputTokens, result.Turn.Usage.OutputTokens)
 		finishReason := assistantturn.FinalizeTurn(result.Turn, assistantturn.FinalizeOptions{}).FinishReason
@@ -186,7 +186,7 @@ func (h *Handler) handleNonStream(w http.ResponseWriter, resp *http.Response, co
 		writeOpenAIErrorWithCode(w, status, message, code)
 		return
 	}
-	respBody := openaifmt.BuildChatCompletionWithToolCalls(completionID, model, finalPrompt, turn.Thinking, turn.Text, turn.ToolCalls, toolsRaw)
+	respBody := openaifmt.BuildChatCompletion(completionID, model, finalPrompt, turn.Thinking, turn.Text, nil, toolsRaw)
 	respBody["usage"] = assistantturn.OpenAIChatUsage(turn)
 	if historySession != nil {
 		historySession.success(http.StatusOK, historyThinkingForArchive(turn.RawThinking, turn.DetectionThinking, turn.Thinking), historyTextForArchive(turn.RawText, turn.Text), outcome.FinishReason, assistantturn.OpenAIChatUsage(turn))
@@ -215,8 +215,6 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 	}
 
 	created := time.Now().Unix()
-	bufferToolContent := len(toolNames) > 0
-	emitEarlyToolDeltas := h.toolcallFeatureMatchEnabled() && h.toolcallEarlyEmitHighConfidence()
 	stripReferenceMarkers := stripReferenceMarkersEnabled()
 	initialType := "text"
 	if thinkingEnabled {
@@ -237,8 +235,6 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 		toolNames,
 		toolsRaw,
 		promptcompat.DefaultToolChoicePolicy(),
-		bufferToolContent,
-		emitEarlyToolDeltas,
 	)
 	streamRuntime.refFileTokens = refFileTokens
 

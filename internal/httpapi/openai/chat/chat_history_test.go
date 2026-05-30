@@ -137,8 +137,8 @@ func TestChatHistoryNonStreamArchivesRawToolCallMarkup(t *testing.T) {
 	if full.Content != rawToolCall {
 		t.Fatalf("expected raw tool markup archived, got %q", full.Content)
 	}
-	if full.FinishReason != "tool_calls" {
-		t.Fatalf("expected tool_calls finish reason, got %#v", full.FinishReason)
+	if full.FinishReason != "stop" {
+		t.Fatalf("expected stop finish reason (tool calling removed), got %#v", full.FinishReason)
 	}
 }
 
@@ -178,8 +178,8 @@ func TestChatHistoryStreamArchivesRawToolCallMarkup(t *testing.T) {
 	if full.Content != rawToolCall {
 		t.Fatalf("expected raw streamed tool markup archived, got %q", full.Content)
 	}
-	if full.FinishReason != "tool_calls" {
-		t.Fatalf("expected tool_calls finish reason, got %#v", full.FinishReason)
+	if full.FinishReason != "stop" {
+		t.Fatalf("expected stop finish reason (tool calling removed), got %#v", full.FinishReason)
 	}
 }
 

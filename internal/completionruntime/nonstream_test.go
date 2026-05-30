@@ -91,11 +91,10 @@ func TestExecuteNonStreamWithRetryBuildsCanonicalTurn(t *testing.T) {
 	if got := result.Turn.ResponseMessageID; got != 42 {
 		t.Fatalf("response message id mismatch: %d", got)
 	}
-	if len(result.Turn.ToolCalls) != 1 {
-		t.Fatalf("expected one tool call, got %d", len(result.Turn.ToolCalls))
-	}
-	if _, ok := result.Turn.ToolCalls[0].Input["content"].(string); !ok {
-		t.Fatalf("expected schema-normalized string argument, got %#v", result.Turn.ToolCalls[0].Input["content"])
+	// Tool calling removed: markup-looking output is preserved as plain visible
+	// text and never parsed into tool calls.
+	if !strings.Contains(result.Turn.Text, "tool_calls") {
+		t.Fatalf("expected tool markup preserved as plain text, got %q", result.Turn.Text)
 	}
 	if result.Turn.Usage.InputTokens == 0 || result.Turn.Usage.TotalTokens == 0 {
 		t.Fatalf("expected usage to be populated, got %#v", result.Turn.Usage)

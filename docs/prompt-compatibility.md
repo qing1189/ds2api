@@ -5,6 +5,8 @@
 > 本文档是 DS2API“把 OpenAI / Claude / Gemini 风格 API 请求兼容成 DeepSeek 网页对话纯文本上下文”的专项说明。
 > 这是项目最重要的兼容产物之一。凡是修改消息标准化、tool prompt 注入、tool history 保留、文件引用、current input file、下游 completion payload 组装等行为，都必须同步更新本文档。
 
+> ⚠️ **工具调用 / DSML 已整体移除**（DeepSeek 检测到注入的 DSML 工具标记会立即封号）。本文档中关于 tool prompt 注入、DSML 工具外壳、tool history 序列化、`tool_choice` 强制、思维链工具补发、`DS2API_TOOLS.txt` 上传等内容**均已失效**：客户端传入的 `tools` / `tool_choice` / `tool_use` / `functionCall` 等字段被接受但忽略，prompt 不再注入任何工具说明，模型输出一律按普通对话文本返回。以下历史描述仅作存档参考。
+
 ## 1. 核心结论
 
 DS2API 当前的核心思路，不是把客户端传来的 `messages`、`tools`、`attachments` 原样转发给下游。
@@ -451,7 +453,6 @@ Parameters: ...
 如果外部接口行为也变了，还应同步检查：
 
 - [API.md](../API.md)
-- [docs/toolcall-semantics.md](./toolcall-semantics.md)
 
 原则是：
 

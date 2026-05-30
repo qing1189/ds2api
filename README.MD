@@ -58,7 +58,6 @@
 - [并发模型](#并发模型)
 - [智能权重轮询与账号统计](#智能权重轮询与账号统计)
 - [防风控策略](#防风控策略)
-- [Tool Call 适配](#tool-call-适配)
 - [本地开发抓包工具](#本地开发抓包工具)
 - [文档索引](#文档索引)
 - [测试](#测试)
@@ -92,7 +91,6 @@ flowchart LR
             Pool["Account Pool + Queue\n(权重轮询 + 并发槽位 + 等待队列)"]
             DSClient["DeepSeek Client\n(Session / Auth / Completion / Files)"]
             Pow["PoW 实现\n(纯 Go)"]
-            Tool["Tool Sieve\n(Go/Node 语义对齐)"]
             History["Current Input File\n(DS2API_HISTORY.txt)"]
             Risk["Anti-Risk\n(账号粘性指纹 / uTLS / log-uniform 抖动)"]
             Stats["请求统计\n(账号 / API Key + token 计数)"]
@@ -111,10 +109,8 @@ flowchart LR
     Completion -.完整上下文.-> History
     Completion --> Turn
     Vercel -.Go prepare.-> Completion
-    Vercel -.Node SSE.-> Tool
     Completion --> Auth
     Completion -.权重轮询.-> Pool
-    Completion -.工具调用解析.-> Tool
     Completion -.PoW 计算.-> Pow
     Pool -.请求计数.-> Stats
     Auth --> DSClient
@@ -146,7 +142,7 @@ flowchart LR
 | 防风控增强 | 账号粘性设备指纹（UA / locale / x-device-id 同账号恒定，trace-id 每请求换）、uTLS Safari 握手、log-uniform 请求抖动、会话复用，详见 [docs/anti-risk-control.md](docs/anti-risk-control.md) |
 | 请求统计 | 按账号 / API Key 统计请求总数、成功/失败次数与输入/输出 token，可在 WebUI 查看并随时重置 |
 | DeepSeek PoW | 纯 Go 高性能实现（DeepSeekHashV1），毫秒级响应 |
-| Tool Calling | 防泄漏处理：非代码块高置信特征识别、`delta.tool_calls` 早发、结构化增量输出 |
+| Tool Calling | ❌ 已移除（DeepSeek 检测 DSML 工具标记会封号）；`tools` 等字段被接受但忽略，输出按普通对话文本返回 |
 | Admin API | 配置管理、运行时设置热更新、代理管理、账号测试 / 批量测试、权重与统计查询、指纹轮换、会话清理、导入导出、Vercel 同步、版本检查 |
 | WebUI 管理台 | `/admin` 单页应用（中英文双语、深色模式，含权重面板、统计面板，支持查看服务器端对话记录） |
 | 运维探针 | `GET /healthz`（存活）、`GET /readyz`（就绪） |
@@ -203,11 +199,10 @@ OpenAI `/v1/*` 仍是推荐的规范路径；同时支持 `/models`、`/chat/com
 - `ANTHROPIC_BASE_URL` 推荐直接指向 DS2API 根地址（例如 `http://127.0.0.1:5001`），Claude Code 会请求 `/v1/messages?beta=true`。
 - `ANTHROPIC_API_KEY` 需要与 `config.json` 中 `keys` 一致；建议同时保留常规 key 与 `sk-ant-*` 形态 key，兼容不同客户端校验习惯。
 - 若系统设置了代理，建议对 DS2API 地址配置 `NO_PROXY=127.0.0.1,localhost,<你的主机IP>`，避免本地回环请求被代理拦截。
-- 如遇“工具调用输出成文本、未执行”问题，请优先检查模型输出是否为推荐的半角管道符 DSML 工具块：`<|DSML|tool_calls><|DSML|invoke name="..."><|DSML|parameter name="...">...`。兼容层也接受旧式 canonical XML：`<tool_calls><invoke name="..."><parameter name="...">...`；旧式 `<tools>` / `<tool_call>` / `<tool_name>` / `<param>`、`<function_call>`、`tool_use` 或纯 JSON `tool_calls` 片段不会执行，会作为普通文本处理。
 
 ### Gemini 接口
 
-Gemini 适配器将模型名通过 `model_aliases` 或内置精确 alias 映射到 DeepSeek 原生模型（覆盖 `gemini-2.5-*`、`gemini-3*`、`gemini-pro-vision` 等常见名称），支持 `generateContent` 和 `streamGenerateContent` 两种调用方式，并完整支持 Tool Calling（`functionDeclarations` → `functionCall` 输出）。若 Gemini 模型名带 `-nothinking` 后缀，例如 `gemini-2.5-pro-nothinking`，会映射到对应的强制关闭思考模型。
+Gemini 适配器将模型名通过 `model_aliases` 或内置精确 alias 映射到 DeepSeek 原生模型（覆盖 `gemini-2.5-*`、`gemini-3*`、`gemini-pro-vision` 等常见名称），支持 `generateContent` 和 `streamGenerateContent` 两种调用方式。若 Gemini 模型名带 `-nothinking` 后缀，例如 `gemini-2.5-pro-nothinking`，会映射到对应的强制关闭思考模型。
 
 ## 快速开始
 
@@ -433,20 +428,13 @@ DS2API 在请求形态上做了多项处理，目标是让发往 DeepSeek 上游
 
 > 怀疑被风控时，可先调用 `POST /admin/queue/rotate-fingerprints` 让全员「换一台手机」再观察。强烈建议为不同账号配置不同代理，否则同 IP 下数十个不同 device id 反而是异常信号。
 
-## Tool Call 适配
+## Tool Call 适配（已移除）
 
-当请求中带 `tools` 时，DS2API 会做防泄漏处理与结构化转译：
+> 自本版本起，**工具调用 / Function Calling 适配已整体移除**。DeepSeek 网页端会检测注入到 prompt 中的 DSML 工具标记并触发风控封号，因此 DS2API 不再向上游注入任何工具说明 / DSML，也不再从模型输出中解析工具调用。
 
-1. 只在**非 Markdown 代码上下文**启用执行型 toolcall 识别（fenced code block 和行内 code span 中的示例默认不触发）
-2. 解析层当前把半角管道符 DSML 外壳视为推荐可执行调用：`<|DSML|tool_calls>` → `<|DSML|invoke name="...">` → `<|DSML|parameter name="...">`；兼容旧式 canonical XML `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`，以及若干 DSML 前缀/分隔符漂移。DSML 只是外壳别名，内部仍以 XML 解析语义为准；旧式 `<tools>` / `<tool_call>` / `<tool_name>` / `<param>`、`<function_call>`、`tool_use` / antml 变体与纯 JSON `tool_calls` 片段都会按普通文本处理，完整但 malformed 的 wrapper 也会作为普通文本释放
-3. `responses` 流式严格使用官方 item 生命周期事件（`response.output_item.*`、`response.content_part.*`、`response.function_call_arguments.*`）
-4. `responses` 支持并执行 `tool_choice`（`auto`/`none`/`required`/强制函数）；`required` 违规时非流式返回 `422`，流式返回 `response.failed`
-5. 客户端请求哪种协议，就按该协议返回工具调用（OpenAI/Claude/Gemini 各自原生结构）；模型侧优先约束输出规范 XML，再由兼容层转译
-
-> 说明：当前版本 parser 层以”尽量解析成功”为优先，所有格式合法的 XML 工具调用都会通过，不做工具名 allow-list 过滤。
-> 解析层会保留显式空字符串或纯空白参数；Prompt 会要求模型不要主动输出空参数，缺参/空命令的拒绝应由工具执行侧或客户端 schema 校验负责。
->
-> 想评估”把工具调用封装成 XML 再输入模型”的方案，可参考：`docs/toolcall-semantics.md`。
+- 客户端仍可在请求中携带 `tools` / `tool_choice` / `functions`（OpenAI）、`tool_use` / `tool_result`（Claude）、`functionDeclarations` / `functionCall`（Gemini）等字段——这些字段会被**接受但忽略**，既不会报错，也不会改写发往 DeepSeek 的 prompt。
+- 模型输出（包括任何看起来像 `<tool_calls>` / `<|DSML|...>` 的文本）一律作为**普通对话文本**返回，`finish_reason` 始终为 `stop`（Claude `stop_reason=end_turn`），不再产生 `tool_calls` / `tool_use` / `functionCall`。
+- 如需工具 / Agent 能力，请在客户端侧自行实现（由客户端解析模型文本并执行）；DS2API 只把 DeepSeek 当作纯对话模型转发，使请求更接近真实人类对话以规避风控。
 
 ## 本地开发抓包工具
 

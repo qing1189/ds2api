@@ -1,34 +1,24 @@
 package openai
 
 import (
-	"ds2api/internal/toolcall"
 	"strings"
 	"time"
 )
 
-func BuildChatCompletion(completionID, model, finalPrompt, finalThinking, finalText string, toolNames []string, toolsRaw any) map[string]any {
-	detected := toolcall.ParseAssistantToolCallsDetailed(finalText, finalThinking, toolNames)
-	return BuildChatCompletionWithToolCalls(completionID, model, finalPrompt, finalThinking, finalText, detected.Calls, toolsRaw)
-}
-
-func BuildChatCompletionWithToolCalls(completionID, model, finalPrompt, finalThinking, finalText string, detected []toolcall.ParsedToolCall, toolsRaw any) map[string]any {
-	finishReason := "stop"
+// BuildChatCompletion renders a plain-text chat completion. Tool calling has
+// been removed; toolNames / toolsRaw are accepted for call-site compatibility
+// but ignored.
+func BuildChatCompletion(completionID, model, finalPrompt, finalThinking, finalText string, _ []string, _ any) map[string]any {
 	messageObj := map[string]any{"role": "assistant", "content": finalText}
 	if strings.TrimSpace(finalThinking) != "" {
 		messageObj["reasoning_content"] = finalThinking
 	}
-	if len(detected) > 0 {
-		finishReason = "tool_calls"
-		messageObj["tool_calls"] = toolcall.FormatOpenAIToolCalls(detected, toolsRaw)
-		messageObj["content"] = nil
-	}
-
 	return map[string]any{
 		"id":      completionID,
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
 		"model":   model,
-		"choices": []map[string]any{{"index": 0, "message": messageObj, "finish_reason": finishReason}},
+		"choices": []map[string]any{{"index": 0, "message": messageObj, "finish_reason": "stop"}},
 		"usage":   BuildChatUsageForModel(model, finalPrompt, finalThinking, finalText, 0),
 	}
 }

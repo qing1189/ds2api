@@ -92,31 +92,6 @@ func BuildResponsesReasoningDeltaPayload(responseID, delta string) map[string]an
 	}
 }
 
-func BuildResponsesFunctionCallArgumentsDeltaPayload(responseID, itemID string, outputIndex int, callID, delta string) map[string]any {
-	return map[string]any{
-		"type":         "response.function_call_arguments.delta",
-		"id":           responseID,
-		"response_id":  responseID,
-		"item_id":      itemID,
-		"output_index": outputIndex,
-		"call_id":      callID,
-		"delta":        delta,
-	}
-}
-
-func BuildResponsesFunctionCallArgumentsDonePayload(responseID, itemID string, outputIndex int, callID, name, arguments string) map[string]any {
-	return map[string]any{
-		"type":         "response.function_call_arguments.done",
-		"id":           responseID,
-		"response_id":  responseID,
-		"item_id":      itemID,
-		"output_index": outputIndex,
-		"call_id":      callID,
-		"name":         name,
-		"arguments":    normalizeJSONString(arguments),
-	}
-}
-
 func BuildResponsesFailedPayload(responseID, model string, status int, message, code string) map[string]any {
 	code = strings.TrimSpace(code)
 	if code == "" {

@@ -7,7 +7,6 @@ import (
 	"ds2api/internal/httpapi/openai/shared"
 	"ds2api/internal/promptcompat"
 	"ds2api/internal/sse"
-	"ds2api/internal/toolcall"
 	"ds2api/internal/util"
 )
 
@@ -15,7 +14,6 @@ type StopReason string
 
 const (
 	StopReasonStop          StopReason = "stop"
-	StopReasonToolCalls     StopReason = "tool_calls"
 	StopReasonContentFilter StopReason = "content_filter"
 	StopReasonError         StopReason = "error"
 )
@@ -33,6 +31,8 @@ type OutputError struct {
 	Code    string
 }
 
+// Turn models a single assistant response. Tool calling has been removed, so a
+// turn now only ever carries plain text + reasoning.
 type Turn struct {
 	Model             string
 	Prompt            string
@@ -41,8 +41,6 @@ type Turn struct {
 	DetectionThinking string
 	Text              string
 	Thinking          string
-	ToolCalls         []toolcall.ParsedToolCall
-	ParsedToolCalls   toolcall.ToolCallParseResult
 	CitationLinks     map[int]string
 	ContentFilter     bool
 	ResponseMessageID int
@@ -52,6 +50,8 @@ type Turn struct {
 }
 
 type FinalizeOptions struct {
+	// AlreadyEmittedToolCalls is retained for call-site compatibility but is
+	// always false now that tool calling is removed.
 	AlreadyEmittedToolCalls bool
 }
 
@@ -71,23 +71,22 @@ type BuildOptions struct {
 	RefFileTokens         int
 	SearchEnabled         bool
 	StripReferenceMarkers bool
-	ToolNames             []string
-	ToolsRaw              any
-	ToolChoice            promptcompat.ToolChoicePolicy
+	// ToolNames / ToolsRaw / ToolChoice are accepted for API compatibility but
+	// no longer influence output (tool calling removed).
+	ToolNames  []string
+	ToolsRaw   any
+	ToolChoice promptcompat.ToolChoicePolicy
 }
 
 type StreamSnapshot struct {
-	RawText               string
-	VisibleText           string
-	RawThinking           string
-	VisibleThinking       string
-	DetectionThinking     string
-	ContentFilter         bool
-	CitationLinks         map[int]string
-	ResponseMessageID     int
-	AlreadyEmittedCalls   bool
-	AdditionalToolCalls   []toolcall.ParsedToolCall
-	AlreadyEmittedToolRaw bool
+	RawText           string
+	VisibleText       string
+	RawThinking       string
+	VisibleThinking   string
+	DetectionThinking string
+	ContentFilter     bool
+	CitationLinks     map[int]string
+	ResponseMessageID int
 }
 
 func BuildTurnFromCollected(result sse.CollectResult, opts BuildOptions) Turn {
@@ -97,16 +96,9 @@ func BuildTurnFromCollected(result sse.CollectResult, opts BuildOptions) Turn {
 		text = shared.ReplaceCitationMarkersWithLinks(text, result.CitationLinks)
 	}
 
-	parsed := shared.DetectAssistantToolCalls(result.Text, text, result.Thinking, result.ToolDetectionThinking, opts.ToolNames)
-	calls := toolcall.NormalizeParsedToolCallsForSchemas(parsed.Calls, opts.ToolsRaw)
-	parsed.Calls = calls
-
 	stopReason := StopReasonStop
 	if result.ContentFilter {
 		stopReason = StopReasonContentFilter
-	}
-	if len(calls) > 0 {
-		stopReason = StopReasonToolCalls
 	}
 
 	turn := Turn{
@@ -117,8 +109,6 @@ func BuildTurnFromCollected(result sse.CollectResult, opts BuildOptions) Turn {
 		DetectionThinking: result.ToolDetectionThinking,
 		Text:              text,
 		Thinking:          thinking,
-		ToolCalls:         calls,
-		ParsedToolCalls:   parsed,
 		CitationLinks:     result.CitationLinks,
 		ContentFilter:     result.ContentFilter,
 		ResponseMessageID: result.ResponseMessageID,
@@ -139,20 +129,9 @@ func BuildTurnFromStreamSnapshot(snapshot StreamSnapshot, opts BuildOptions) Tur
 		text = shared.ReplaceCitationMarkersWithLinks(text, snapshot.CitationLinks)
 	}
 
-	parsed := shared.DetectAssistantToolCalls(snapshot.RawText, text, snapshot.RawThinking, snapshot.DetectionThinking, opts.ToolNames)
-	calls := parsed.Calls
-	if len(calls) == 0 && len(snapshot.AdditionalToolCalls) > 0 {
-		calls = snapshot.AdditionalToolCalls
-	}
-	calls = toolcall.NormalizeParsedToolCallsForSchemas(calls, opts.ToolsRaw)
-	parsed.Calls = calls
-
 	stopReason := StopReasonStop
 	if snapshot.ContentFilter {
 		stopReason = StopReasonContentFilter
-	}
-	if len(calls) > 0 || snapshot.AlreadyEmittedCalls || snapshot.AlreadyEmittedToolRaw {
-		stopReason = StopReasonToolCalls
 	}
 
 	turn := Turn{
@@ -163,18 +142,14 @@ func BuildTurnFromStreamSnapshot(snapshot StreamSnapshot, opts BuildOptions) Tur
 		DetectionThinking: snapshot.DetectionThinking,
 		Text:              text,
 		Thinking:          thinking,
-		ToolCalls:         calls,
-		ParsedToolCalls:   parsed,
 		CitationLinks:     snapshot.CitationLinks,
 		ContentFilter:     snapshot.ContentFilter,
 		ResponseMessageID: snapshot.ResponseMessageID,
 		StopReason:        stopReason,
 	}
 	turn.Usage = BuildUsage(opts.Model, opts.Prompt, thinking, text, opts.RefFileTokens)
-	if !snapshot.AlreadyEmittedCalls && !snapshot.AlreadyEmittedToolRaw {
-		turn.Error = ValidateTurn(turn, opts.ToolChoice)
-	}
-	if turn.Error != nil && len(calls) == 0 {
+	turn.Error = ValidateTurn(turn, opts.ToolChoice)
+	if turn.Error != nil {
 		turn.StopReason = StopReasonError
 	}
 	return turn
@@ -192,17 +167,7 @@ func BuildUsage(model, prompt, thinking, text string, refFileTokens int) Usage {
 	}
 }
 
-func ValidateTurn(turn Turn, policy promptcompat.ToolChoicePolicy) *OutputError {
-	if policy.IsRequired() && len(turn.ToolCalls) == 0 {
-		return &OutputError{
-			Status:  http.StatusUnprocessableEntity,
-			Message: "tool_choice requires at least one valid tool call.",
-			Code:    "tool_choice_violation",
-		}
-	}
-	if len(turn.ToolCalls) > 0 {
-		return nil
-	}
+func ValidateTurn(turn Turn, _ promptcompat.ToolChoicePolicy) *OutputError {
 	if strings.TrimSpace(turn.Text) != "" {
 		return nil
 	}
@@ -222,35 +187,25 @@ func UpstreamEmptyOutputDetail(contentFilter bool, text, thinking string) (int, 
 }
 
 // ShouldRetryEmptyOutput returns true when the turn produced no visible text
-// and has no tool calls or content filter. This includes thinking-only responses,
-// where the model returned reasoning but no answer — a retry may yield text.
+// and no content filter. This includes thinking-only responses, where the model
+// returned reasoning but no answer — a retry may yield text.
 func ShouldRetryEmptyOutput(turn Turn, attempts, maxAttempts int) bool {
 	return attempts < maxAttempts &&
 		!turn.ContentFilter &&
-		len(turn.ToolCalls) == 0 &&
 		strings.TrimSpace(turn.Text) == ""
 }
 
-func FinalizeTurn(turn Turn, opts FinalizeOptions) FinalOutcome {
-	hasToolCalls := len(turn.ToolCalls) > 0 || opts.AlreadyEmittedToolCalls
+func FinalizeTurn(turn Turn, _ FinalizeOptions) FinalOutcome {
 	hasVisibleText := strings.TrimSpace(turn.Text) != ""
 	hasVisibleThinking := strings.TrimSpace(turn.Thinking) != ""
-	err := turn.Error
-	if hasToolCalls {
-		err = nil
-	}
-	finishReason := FinishReason(turn)
-	if hasToolCalls {
-		finishReason = "tool_calls"
-	}
 	return FinalOutcome{
-		FinishReason:     finishReason,
-		Error:            err,
+		FinishReason:     FinishReason(turn),
+		Error:            turn.Error,
 		Usage:            turn.Usage,
-		HasToolCalls:     hasToolCalls,
+		HasToolCalls:     false,
 		HasVisibleText:   hasVisibleText,
-		HasVisibleOutput: hasVisibleText || hasVisibleThinking || hasToolCalls,
-		ShouldFail:       err != nil,
+		HasVisibleOutput: hasVisibleText || hasVisibleThinking,
+		ShouldFail:       turn.Error != nil,
 	}
 }
 
@@ -275,8 +230,6 @@ func OpenAIResponsesUsage(turn Turn) map[string]any {
 
 func FinishReason(turn Turn) string {
 	switch turn.StopReason {
-	case StopReasonToolCalls:
-		return "tool_calls"
 	case StopReasonContentFilter:
 		return "content_filter"
 	default:

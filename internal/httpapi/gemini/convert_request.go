@@ -31,11 +31,7 @@ func normalizeGeminiRequest(store ConfigReader, routeModel string, req map[strin
 		return promptcompat.StandardRequest{}, fmt.Errorf("request must include non-empty contents")
 	}
 
-	toolsRaw := convertGeminiTools(req["tools"])
-	finalPrompt, toolNames := promptcompat.BuildOpenAIPromptForAdapter(messagesRaw, toolsRaw, "", thinkingEnabled)
-	if len(toolNames) == 0 && len(toolsRaw) > 0 {
-		toolNames = []string{"__any_tool__"}
-	}
+	finalPrompt, _ := promptcompat.BuildOpenAIPromptForAdapter(messagesRaw, nil, "", thinkingEnabled)
 	passThrough := collectGeminiPassThrough(req)
 
 	return promptcompat.StandardRequest{
@@ -45,9 +41,9 @@ func normalizeGeminiRequest(store ConfigReader, routeModel string, req map[strin
 		ResponseModel:   requestedModel,
 		Messages:        messagesRaw,
 		PromptTokenText: finalPrompt,
-		ToolsRaw:        toolsRaw,
+		ToolsRaw:        nil,
 		FinalPrompt:     finalPrompt,
-		ToolNames:       toolNames,
+		ToolNames:       nil,
 		Stream:          stream,
 		Thinking:        thinkingEnabled,
 		Search:          searchEnabled,

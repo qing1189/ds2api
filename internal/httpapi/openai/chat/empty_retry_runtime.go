@@ -57,7 +57,7 @@ func (h *Handler) handleNonStreamWithRetry(w http.ResponseWriter, ctx context.Co
 		writeOpenAIErrorWithCode(w, outErr.Status, outErr.Message, outErr.Code)
 		return
 	}
-	respBody := openaifmt.BuildChatCompletionWithToolCalls(result.SessionID, model, result.Turn.Prompt, result.Turn.Thinking, result.Turn.Text, result.Turn.ToolCalls, toolsRaw)
+	respBody := openaifmt.BuildChatCompletion(result.SessionID, model, result.Turn.Prompt, result.Turn.Thinking, result.Turn.Text, nil, toolsRaw)
 	respBody["usage"] = assistantturn.OpenAIChatUsage(result.Turn)
 	outcome := assistantturn.FinalizeTurn(result.Turn, assistantturn.FinalizeOptions{})
 	if historySession != nil {
@@ -136,7 +136,6 @@ func (h *Handler) prepareChatStreamRuntime(w http.ResponseWriter, resp *http.Res
 		w, rc, canFlush, completionID, time.Now().Unix(), model, finalPrompt,
 		thinkingEnabled, searchEnabled, stripReferenceMarkersEnabled(), toolNames, toolsRaw,
 		toolChoice,
-		len(toolNames) > 0, h.toolcallFeatureMatchEnabled() && h.toolcallEarlyEmitHighConfidence(),
 	)
 	streamRuntime.refFileTokens = refFileTokens
 	return streamRuntime, initialType, true
