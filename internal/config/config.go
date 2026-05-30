@@ -73,11 +73,19 @@ func StableProxyID(p Proxy) string {
 	return "proxy_" + hex.EncodeToString(sum[:6])
 }
 
+// ClearAccountTokens wipes runtime-managed tokens before persistence so that
+// login-managed account tokens are never written to disk (they are refreshed
+// at runtime). Direct-token accounts are the exception: their token IS the
+// only credential, so it must be preserved on save/export, otherwise the
+// account would become unusable after a restart.
 func (c *Config) ClearAccountTokens() {
 	if c == nil {
 		return
 	}
 	for i := range c.Accounts {
+		if c.Accounts[i].IsDirectToken() {
+			continue
+		}
 		c.Accounts[i].Token = ""
 	}
 }
@@ -104,9 +112,10 @@ func (c *Config) NormalizeCredentials() {
 	c.normalizeModelAliases()
 }
 
-// DropInvalidAccounts removes accounts that cannot be addressed by admin APIs
-// (no email and no normalizable mobile). This prevents legacy token-only
-// records from becoming orphaned empty entries after token stripping.
+// DropInvalidAccounts removes accounts that cannot be addressed at all (no
+// email, no normalizable mobile, and no token). Direct-token accounts are kept
+// because Identifier() now derives a stable id from their token, so they are
+// addressable by the admin APIs and the account pool.
 func (c *Config) DropInvalidAccounts() {
 	if c == nil || len(c.Accounts) == 0 {
 		return

@@ -172,6 +172,12 @@ func (r *Resolver) RefreshToken(ctx context.Context, a *RequestAuth) bool {
 	if !a.UseConfigToken || a.AccountID == "" {
 		return false
 	}
+	// Direct-token accounts have no credentials to log in with, so a refresh
+	// is impossible. Don't wipe the operator-provided token; just report the
+	// failure so weighting/rotation can route around it.
+	if a.Account.IsDirectToken() {
+		return false
+	}
 	_ = r.Store.UpdateAccountToken(a.AccountID, "")
 	a.Account.Token = ""
 	if err := r.loginAndPersist(ctx, a); err != nil {
@@ -183,6 +189,13 @@ func (r *Resolver) RefreshToken(ctx context.Context, a *RequestAuth) bool {
 
 func (r *Resolver) MarkTokenInvalid(a *RequestAuth) {
 	if !a.UseConfigToken || a.AccountID == "" {
+		return
+	}
+	// For direct-token accounts the token is the only credential and cannot be
+	// regenerated, so we keep it in place (clearing it would silently drop the
+	// account) and only record the failure for weighted selection.
+	if a.Account.IsDirectToken() {
+		r.ReportRequestFailure(a.AccountID)
 		return
 	}
 	a.Account.Token = ""
@@ -381,6 +394,13 @@ func callerTokenID(token string) string {
 }
 
 func (r *Resolver) ensureManagedToken(ctx context.Context, a *RequestAuth) error {
+	// Direct-token accounts (token pasted via DS2API_TOKENS / admin / config
+	// with no email/mobile) cannot log in. Use the token verbatim and never
+	// attempt login or periodic re-login.
+	if a.Account.IsDirectToken() {
+		a.DeepSeekToken = strings.TrimSpace(a.Account.Token)
+		return nil
+	}
 	if strings.TrimSpace(a.Account.Token) == "" {
 		return r.loginAndPersist(ctx, a)
 	}

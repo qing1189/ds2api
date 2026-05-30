@@ -43,6 +43,10 @@ func LoadStoreWithError() (*Store, error) {
 
 func loadStore() (*Store, error) {
 	cfg, fromEnv, err := loadConfig()
+	// Direct-token accounts from DS2API_TOKENS / DS2API_TOKEN are merged in
+	// regardless of the config source, so operators can paste session tokens
+	// without touching the config JSON. Tokens already present are skipped.
+	cfg.MergeDirectTokens(LoadDirectTokensFromEnv())
 	cfg.NormalizeCredentials()
 	if validateErr := ValidateConfig(cfg); validateErr != nil {
 		err = errors.Join(err, validateErr)

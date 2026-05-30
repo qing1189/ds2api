@@ -8,11 +8,33 @@ import (
 	"testing"
 )
 
-func TestAccountIdentifierRequiresEmailOrMobile(t *testing.T) {
+func TestAccountIdentifierFallsBackToTokenHash(t *testing.T) {
 	acc := Account{Token: "example-token-value"}
 	id := acc.Identifier()
-	if id != "" {
-		t.Fatalf("expected empty identifier when only token is present, got %q", id)
+	if !strings.HasPrefix(id, "token:") {
+		t.Fatalf("expected token-derived identifier for token-only account, got %q", id)
+	}
+	// Identifier must be stable and must not leak the raw token.
+	if strings.Contains(id, "example-token-value") {
+		t.Fatalf("identifier should not contain the raw token: %q", id)
+	}
+	if acc.Identifier() != id {
+		t.Fatalf("expected stable identifier, got %q then %q", id, acc.Identifier())
+	}
+	if !acc.IsDirectToken() {
+		t.Fatalf("expected token-only account to be a direct-token account")
+	}
+}
+
+func TestAccountIsDirectTokenFalseWhenCredentialsPresent(t *testing.T) {
+	if (Account{Email: "u@example.com", Token: "tok"}).IsDirectToken() {
+		t.Fatal("account with email should not be a direct-token account")
+	}
+	if (Account{Mobile: "13800138000", Token: "tok"}).IsDirectToken() {
+		t.Fatal("account with mobile should not be a direct-token account")
+	}
+	if (Account{Token: ""}).IsDirectToken() {
+		t.Fatal("account without token should not be a direct-token account")
 	}
 }
 
@@ -73,24 +95,74 @@ func TestLoadStorePreservesProxiesAndAccountProxyAssignment(t *testing.T) {
 	}
 }
 
-func TestLoadStoreDropsLegacyTokenOnlyAccounts(t *testing.T) {
+func TestLoadStoreKeepsDirectTokenOnlyAccounts(t *testing.T) {
 	t.Setenv("DS2API_CONFIG_JSON", `{
 		"accounts":[
-			{"token":"legacy-token-only"},
+			{"token":"direct-token-only"},
 			{"email":"u@example.com","password":"p","token":"runtime-token"}
 		]
 	}`)
 
 	store := LoadStore()
 	accounts := store.Accounts()
-	if len(accounts) != 1 {
-		t.Fatalf("expected token-only account to be dropped, got %d accounts", len(accounts))
+	if len(accounts) != 2 {
+		t.Fatalf("expected direct-token account to be kept, got %d accounts", len(accounts))
 	}
-	if accounts[0].Identifier() != "u@example.com" {
-		t.Fatalf("unexpected remaining account: %#v", accounts[0])
+
+	var direct, managed *Account
+	for i := range accounts {
+		if accounts[i].IsDirectToken() {
+			direct = &accounts[i]
+		} else if accounts[i].Email == "u@example.com" {
+			managed = &accounts[i]
+		}
 	}
-	if accounts[0].Token != "" {
-		t.Fatalf("expected persisted token to be cleared, got %q", accounts[0].Token)
+	if direct == nil {
+		t.Fatalf("expected a direct-token account to survive load: %#v", accounts)
+	}
+	if direct.Token != "direct-token-only" {
+		t.Fatalf("expected direct token preserved, got %q", direct.Token)
+	}
+	if managed == nil {
+		t.Fatalf("expected managed account to survive load: %#v", accounts)
+	}
+	// Managed (login-backed) account tokens from env input are still stripped.
+	if managed.Token != "" {
+		t.Fatalf("expected managed account token to be cleared, got %q", managed.Token)
+	}
+}
+
+func TestLoadStoreIngestsDirectTokensFromEnv(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{"keys":["k1"],"accounts":[{"email":"u@example.com","password":"p"}]}`)
+	t.Setenv("DS2API_TOKENS", "env-token-1, env-token-2\nenv-token-1")
+
+	store := LoadStore()
+	accounts := store.Accounts()
+
+	tokens := map[string]bool{}
+	for _, acc := range accounts {
+		if acc.IsDirectToken() {
+			tokens[acc.Token] = true
+		}
+	}
+	if !tokens["env-token-1"] || !tokens["env-token-2"] {
+		t.Fatalf("expected env tokens ingested as direct-token accounts, got accounts=%#v", accounts)
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("expected exactly 2 deduplicated env tokens, got %d (%#v)", len(tokens), tokens)
+	}
+}
+
+func TestParseDirectTokensDedupesAndTrims(t *testing.T) {
+	got := ParseDirectTokens("  a , b ;c\n a \n\n d ")
+	want := []string{"a", "b", "c", "d"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
 	}
 }
 

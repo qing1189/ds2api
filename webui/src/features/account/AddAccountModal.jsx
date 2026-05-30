@@ -73,6 +73,17 @@ export default function AddAccountModal({
                             onChange={e => setNewAccount({ ...newAccount, password: e.target.value })}
                         />
                     </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1.5">{t('accountManager.tokenOptional')}</label>
+                        <input
+                            type="password"
+                            className="input-field bg-[#09090b]"
+                            placeholder={t('accountManager.tokenPlaceholder')}
+                            value={newAccount.token}
+                            onChange={e => setNewAccount({ ...newAccount, token: e.target.value })}
+                        />
+                        <p className="mt-1.5 text-xs text-muted-foreground">{t('accountManager.tokenHint')}</p>
+                    </div>
                     <div className="flex justify-end gap-2 pt-2">
                         <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border hover:bg-secondary transition-colors text-sm font-medium">{t('actions.cancel')}</button>
                         <button onClick={onAdd} disabled={loading} className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium disabled:opacity-50">

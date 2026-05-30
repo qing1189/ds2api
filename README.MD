@@ -136,7 +136,7 @@ flowchart LR
 | Gemini 兼容 | `POST /v1beta/models/{model}:generateContent`、`POST /v1beta/models/{model}:streamGenerateContent`（及 `/v1/models/{model}:*` 路径） |
 | Ollama 兼容 | `GET /api/version`、`GET /api/tags`、`POST /api/show` |
 | 统一 CORS 兼容 | `/v1/*`、`/anthropic/*`、`/v1beta/models/*`、`/api/*`、`/admin/*` 统一走同一套 CORS 策略；Vercel 上 `/v1/chat/completions` 的 Node Runtime 也对齐相同放行规则，尽量减少第三方预检请求头限制 |
-| 多账号轮询 | 自动 token 刷新、邮箱/手机号双登录方式 |
+| 多账号轮询 | 自动 token 刷新、邮箱/手机号双登录方式、直连 token（DS2API_TOKENS / 配置 token 字段，免登录） |
 | 智能权重轮询 | 每账号动态权重：失败降权、连续成功 / 限时宽限自动恢复、权重归零自动禁用，并支持管理员手动禁用/启用 |
 | 并发队列控制 | 每账号 in-flight 上限 + 等待队列，动态计算建议并发值 |
 | 防风控增强 | 账号粘性设备指纹（UA / locale / x-device-id 同账号恒定，trace-id 每请求换）、uTLS Safari 握手、log-uniform 请求抖动、会话复用，详见 [docs/anti-risk-control.md](docs/anti-risk-control.md) |
@@ -332,7 +332,7 @@ go run ./cmd/ds2api
 常用字段：
 
 - `keys` / `api_keys`：客户端访问密钥，`api_keys` 支持 `name` 与 `remark` 元信息，`keys` 继续兼容。
-- `accounts`：DeepSeek 托管账号，支持 `email` 或 `mobile` 登录，可配置代理、名称和备注。
+- `accounts`：DeepSeek 托管账号，支持三种方式：`email` 登录、`mobile` 登录，或直接填 `token`（直连 token，无需邮箱/密码，token 直接作为上游凭证使用且不会自动刷新）。均可配置代理、名称和备注。
 - `model_aliases`：OpenAI / Claude / Gemini 共用的模型 alias 映射。
 - `runtime`：账号并发、队列与 token 刷新策略，可通过 Admin Settings 热更新。
 - `auto_delete.mode`：请求结束后的远端会话清理策略，支持 `none` / `single` / `all`。
@@ -340,6 +340,7 @@ go run ./cmd/ds2api
 - 如果关闭 `current_input_file`，请求会直接透传，不上传拆分上下文文件。
 - `thinking_injection`：默认开启；在最新 user 消息末尾追加思考增强提示词，提高高强度推理与工具调用前的思考稳定性；`prompt` 留空时使用内置默认提示词。
 - 防风控相关：`DS2API_FINGERPRINT_SALT`（账号指纹盐）、`DS2API_REQUEST_JITTER_MIN_MS` / `DS2API_REQUEST_JITTER_MAX_MS`（请求抖动范围）、`DS2API_SESSION_CACHE_TTL_MINUTES`（会话复用窗口），详见「[防风控策略](#防风控策略)」与 [docs/anti-risk-control.md](docs/anti-risk-control.md)。
+- 直连 token：`DS2API_TOKENS`（逗号/换行分隔多个 DeepSeek 会话 token）或 `DS2API_TOKEN`（单个），无需邮箱/密码即可作为托管账号使用，会与 `config` 来源的账号合并并去重。
 
 环境变量完整列表见 [部署指南](docs/DEPLOY.md)，接口鉴权规则见 [API.md](API.md#鉴权规则)。
 

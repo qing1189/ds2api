@@ -79,7 +79,7 @@ func (h *Handler) addAccount(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	acc := toAccount(req)
 	if acc.Identifier() == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "需要 email 或 mobile"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "需要 email、mobile 或 token"})
 		return
 	}
 	err := h.Store.Update(func(c *config.Config) error {
@@ -89,12 +89,16 @@ func (h *Handler) addAccount(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		mobileKey := config.CanonicalMobileKey(acc.Mobile)
+		accToken := strings.TrimSpace(acc.Token)
 		for _, a := range c.Accounts {
 			if acc.Email != "" && a.Email == acc.Email {
 				return fmt.Errorf("邮箱已存在")
 			}
 			if mobileKey != "" && config.CanonicalMobileKey(a.Mobile) == mobileKey {
 				return fmt.Errorf("手机号已存在")
+			}
+			if accToken != "" && strings.TrimSpace(a.Token) == accToken {
+				return fmt.Errorf("Token 已存在")
 			}
 		}
 		c.Accounts = append(c.Accounts, acc)

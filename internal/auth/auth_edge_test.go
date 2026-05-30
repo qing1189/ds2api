@@ -140,6 +140,75 @@ func TestMarkTokenInvalidEmptyAccountID(t *testing.T) {
 	// Should not panic
 }
 
+// ─── Direct-token (token-only) account flow ──────────────────────────
+
+func newDirectTokenResolver(t *testing.T) *Resolver {
+	t.Helper()
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["managed-key"],
+		"accounts":[{"token":"paste-me-direct-token"}]
+	}`)
+	store := config.LoadStore()
+	pool := account.NewPool(store)
+	loginCalled := false
+	r := NewResolver(store, pool, func(_ context.Context, _ config.Account) (string, error) {
+		loginCalled = true
+		return "should-not-be-used", nil
+	})
+	t.Cleanup(func() {
+		if loginCalled {
+			t.Errorf("login must never be called for direct-token accounts")
+		}
+	})
+	return r
+}
+
+func TestDirectTokenAccountUsedWithoutLogin(t *testing.T) {
+	r := newDirectTokenResolver(t)
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer managed-key")
+	a, err := r.Determine(req)
+	if err != nil {
+		t.Fatalf("determine failed: %v", err)
+	}
+	defer r.Release(a)
+	if !a.UseConfigToken {
+		t.Fatalf("expected managed mode for token-only account")
+	}
+	if !a.Account.IsDirectToken() {
+		t.Fatalf("expected direct-token account, got %#v", a.Account)
+	}
+	if a.DeepSeekToken != "paste-me-direct-token" {
+		t.Fatalf("expected direct token used verbatim, got %q", a.DeepSeekToken)
+	}
+}
+
+func TestDirectTokenRefreshAndInvalidatePreserveToken(t *testing.T) {
+	r := newDirectTokenResolver(t)
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer managed-key")
+	a, err := r.Determine(req)
+	if err != nil {
+		t.Fatalf("determine failed: %v", err)
+	}
+	defer r.Release(a)
+
+	if r.RefreshToken(context.Background(), a) {
+		t.Fatalf("expected refresh to be a no-op (false) for direct-token account")
+	}
+	if a.Account.Token != "paste-me-direct-token" {
+		t.Fatalf("refresh must not wipe direct token, got %q", a.Account.Token)
+	}
+
+	r.MarkTokenInvalid(a)
+	if a.Account.Token != "paste-me-direct-token" {
+		t.Fatalf("invalidate must not wipe direct token, got %q", a.Account.Token)
+	}
+	if a.DeepSeekToken != "paste-me-direct-token" {
+		t.Fatalf("invalidate must keep deepseek token usable, got %q", a.DeepSeekToken)
+	}
+}
+
 func TestMarkTokenInvalidClearsToken(t *testing.T) {
 	r := newTestResolver(t)
 	req, _ := http.NewRequest("POST", "/", nil)

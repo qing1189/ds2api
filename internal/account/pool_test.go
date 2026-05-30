@@ -190,24 +190,28 @@ func TestPoolGlobalMaxInflightEnv(t *testing.T) {
 	}
 }
 
-func TestPoolDropsLegacyTokenOnlyAccountOnLoad(t *testing.T) {
+func TestPoolKeepsDirectTokenOnlyAccountOnLoad(t *testing.T) {
 	t.Setenv("DS2API_ACCOUNT_MAX_INFLIGHT", "1")
 	t.Setenv("DS2API_CONFIG_JSON", `{
 		"keys":["k1"],
-		"accounts":[{"token":"token-only-account"}]
+		"accounts":[{"token":"direct-token-account"}]
 	}`)
 
 	pool := NewPool(config.LoadStore())
 	status := pool.Status()
-	if got, ok := status["total"].(int); !ok || got != 0 {
+	if got, ok := status["total"].(int); !ok || got != 1 {
 		t.Fatalf("unexpected total in pool status: %#v", status["total"])
 	}
-	if got, ok := status["available"].(int); !ok || got != 0 {
+	if got, ok := status["available"].(int); !ok || got != 1 {
 		t.Fatalf("unexpected available in pool status: %#v", status["available"])
 	}
 
-	if _, ok := pool.Acquire("", nil); ok {
-		t.Fatalf("expected acquire to fail for token-only account")
+	acc, ok := pool.Acquire("", nil)
+	if !ok {
+		t.Fatalf("expected acquire to succeed for direct-token account")
+	}
+	if !acc.IsDirectToken() || acc.Token != "direct-token-account" {
+		t.Fatalf("expected direct-token account from pool, got %#v", acc)
 	}
 }
 
