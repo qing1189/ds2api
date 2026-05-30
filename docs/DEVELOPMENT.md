@@ -53,7 +53,7 @@ gofmt -w <changed-go-files>
 
 ## 3. 常见改动建议
 
-- 改接口行为时，同时检查 `API.md` / `API.en.md` 是否需要同步。
+- 改接口行为时，同时检查 `API.md` 是否需要同步。
 - 改 prompt 兼容链路时，必须同步 `docs/prompt-compatibility.md`。
 - 改 tool call 语义时，同时检查 Go、Node sieve 和 `docs/toolcall-semantics.md`。
 - 改 WebUI 配置项时，同时检查 `webui/src/features/settings`、语言包和 `config.example.json`。
